@@ -40,7 +40,7 @@ jobs:
       - name: Build and Push Image
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ./argo-canary-demo-app-main/
           push: true
           tags: |
             ${{ env.IMAGE }}:${{ steps.version.outputs.VERSION }}
