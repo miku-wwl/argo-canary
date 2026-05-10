@@ -9,7 +9,7 @@ on:
 
 # 环境变量：统一管理镜像名称
 env:
-  # 👇 这是你的 Docker Hub 镜像名，推送时会自动创建仓库
+  # 👇 这是你的 Docker Hub 镜像名
   IMAGE: minglai/argo-canary-demo-app
 
 jobs:
@@ -21,22 +21,21 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. 自动生成版本号（用于给 Docker 镜像打标签）
+      # 2. 自动生成版本号
       - name: Generate version
         id: version
         run: |
           echo "VERSION=v${{ github.run_number }}" >> $GITHUB_OUTPUT
           echo "SEMANTIC_VERSION=${{ github.run_number }}.0.0" >> $GITHUB_OUTPUT
 
-      # 3. 登录 Docker Hub（你已经配置了 TOKEN，这里直接用）
+      # 3. 登录 Docker Hub
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: minglai                  # 你的 Docker Hub 账号
-          password: ${{ secrets.DOCKERHUB_TOKEN }} # 密钥，安全存储
+          username: minglai
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       # 4. 构建 Docker 镜像并推送到 Docker Hub
-      # 👇 核心步骤！你现在学习的就是这一步
       - name: Build and Push Image
         uses: docker/build-push-action@v5
         with:
@@ -47,50 +46,35 @@ jobs:
             ${{ env.IMAGE }}:latest
 
       # ==============================================
-      # 👇 以下是 GitOps + ArgoCD 金丝雀发布专用步骤
-      # 👇 现在学习构建镜像时 不会执行核心逻辑
-      # 👇 后面学 Canary + ArgoCD 时才会用到
+      # 👇 下面是 GitOps 自动更新 HELM 仓
       # ==============================================
 
-      # 调试步骤：测试 GitHub 令牌是否有权限访问 GitOps 仓库
-      - name: Debug repo access
-        run: |
-          curl -H "Authorization: token ${{ secrets.GH_PAT }}" \
-          https://api.github.com/repos/mri-fernando/argo-canary-demo-helm
-
-      # 拉取 GitOps 仓库（存放 Helm 配置 + K8s 部署文件）
+      # 拉取你自己的 GitOps 仓库
       - name: Checkout GitOps repo
         uses: actions/checkout@v4
         with:
-          repository: mri-fernando/argo-canary-demo-helm  # GitOps 配置仓库
-          token: ${{ secrets.GHES_TOKEN }}               # 访问令牌
-          path: gitops                                   
+          repository: miku-wwl/argo-canary       # 你的仓库
+          token: ${{ secrets.GH_PAT }}           # 你刚生成的令牌
+          path: gitops
 
       # 更新 Helm values.yaml 里的镜像版本 tag
       - name: Update Helm values
         run: |
-          cd gitops/demo-app
-          ls
-          cat values.yaml
+          cd gitops/argo-canary-demo-helm-main/demo-app
           sed -i "s/tag:.*/tag: ${{ steps.version.outputs.VERSION }}/" values.yaml
-          cat values.yaml
 
       # 更新 Helm Chart.yaml 里的 appVersion
       - name: Update Helm Chart Version
         run: |
-          cd gitops/demo-app
-          ls
-          cat Chart.yaml
+          cd gitops/argo-canary-demo-helm-main/demo-app
           sed -i "s/appVersion:.*/appVersion: ${{ steps.version.outputs.SEMANTIC_VERSION }}/" Chart.yaml
-          cat Chart.yaml
 
-      # 把更新后的版本号提交并推送到 GitOps 仓库
-      # ArgoCD 会自动检测到变化，完成金丝雀发布
+      # 提交并推送到你的 Git 仓库
       - name: Commit and Push new Helm values
         run: |
           cd gitops
           git config user.name "github-actions"
-          git config user.email "roshane.ishara@gmail.com"
+          git config user.email "miku-wwl@users.noreply.github.com"
           git add . || echo "No changes to add"
           git commit -m "Update image to ${{ steps.version.outputs.VERSION }}" || echo "No changes to commit"
-          git push || echo "No changes to push"     
+          git push || echo "No changes to push"
