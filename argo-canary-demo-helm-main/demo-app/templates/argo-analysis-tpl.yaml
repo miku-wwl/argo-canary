@@ -1,0 +1,32 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: istio-success-rate
+spec:
+  args:
+  - name: service-name
+  - name: namespace
+
+  metrics:
+  - name: success-rate
+    interval: 30s
+    count: 2  # Query 2 times per analysis run, since we're using a rate() function in the query which already looks at a time window
+    successCondition: result[0] >= {{ .Values.canaryAnalysis.success }} # Consider the analysis successful if the success rate is above 99%
+    failureLimit: 1 # Allow up to 1 failure for demo purposes
+
+    provider:
+      prometheus:
+        address: http://prometheus-kube-prometheus-prometheus.monitoring:9090
+        query: |
+          sum(rate(istio_requests_total{
+            reporter="destination",
+            destination_service=~"{{`{{args.service-name}}`}}",
+            destination_workload_namespace="{{`{{args.namespace}}`}}",
+            response_code!~"5.*"
+          }[2m])) 
+          /
+          sum(rate(istio_requests_total{
+            reporter="destination",
+            destination_service=~"{{`{{args.service-name}}`}}",
+            destination_workload_namespace="{{`{{args.namespace}}`}}"
+          }[2m]))

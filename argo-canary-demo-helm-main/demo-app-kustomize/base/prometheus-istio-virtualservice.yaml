@@ -1,0 +1,17 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: prometheus-ui
+spec:
+  gateways:
+    - demo-app-gateway
+  hosts:
+    - prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local
+    - prometheus.mario.com
+  http:
+    - name: prom-http
+      route:
+        - destination:
+            host: prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local
+            port:
+              number: 9090

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-app-istio-metrics
+  namespace: demo
+  labels:
+    app: demo-app
+spec:
+  selector:
+    app: demo-app
+  ports:
+    - name: http-envoy-prom
+      port: 15090
+      targetPort: 15090

@@ -1,0 +1,60 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: demo-app
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  replicas: 2
+
+  strategy:
+    canary:
+
+      canaryService: demo-app-canary
+      stableService: demo-app-stable
+
+      trafficRouting:
+        istio:
+          virtualService:
+            name: demo-app
+            routes:
+              - http
+
+      steps:
+      - setWeight: 10
+      - pause: { duration: 30s }
+      - analysis:
+          templates:
+          - templateName: istio-success-rate
+          args:
+          - name: service-name
+            value: demo-app-canary.demo.svc.cluster.local
+          - name: namespace
+            value: demo
+      - setWeight: 50
+      - pause: { duration: 30s }
+      - analysis:
+          templates:
+          - templateName: istio-success-rate
+          args:
+          - name: service-name
+            value: demo-app-canary.demo.svc.cluster.local
+          - name: namespace
+            value: demo
+
+
+  selector:
+    matchLabels:
+      app: demo-app
+
+  template:
+    metadata:
+      labels:
+        app: demo-app
+    spec:
+      containers:
+        - name: demo-app
+          image: "roshaneishara/argo-canary-demo-app:v57"
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5000

@@ -1,0 +1,66 @@
+replicaCount: 2
+
+argocd:
+  host: argo-demo.mario.com
+
+app:
+  host: demo-app.mario.com
+
+prometheus:
+  host: prometheus.mario.com
+
+image:
+  repository: roshaneishara/argo-canary-demo-app
+  tag: v57
+  pullPolicy: Always
+
+service:
+  port: 80
+  targetPort: 5000
+
+canaryAnalysis:
+  success: 0.99 # Success rate threshold for the analysis template
+
+deploymentStrategy: canary # Change to "blue-green" to switch to blue-green deployment strategy
+
+canary: 
+  rollout:
+    #Template with Analysis steps with prometheus metrics to automatically promote or rollback based on the success rate of the canary version
+    steps:
+      - setWeight: 10
+      - pause: { duration: 30s }
+      - analysis:
+          templates:
+          - templateName: istio-success-rate
+          args:
+          - name: service-name
+            value: demo-app-canary.demo.svc.cluster.local
+          - name: namespace
+            value: demo
+      - setWeight: 50
+      - pause: {duration: 30s}
+      - analysis:
+          templates:
+          - templateName: istio-success-rate
+          args:
+          - name: service-name
+            value: demo-app-canary.demo.svc.cluster.local
+          - name: namespace
+            value: demo
+
+    # Template with Manual Promote step (No Prometheus analysis)
+    steps:
+    # - setWeight: 10
+    # - pause: {}  # Waits for manual promotion indefinitely
+    # - setWeight: 50
+    # - pause: {duration: 30s}
+
+bluegreen:
+  prePromotionAnalysis:
+    templates:
+    - templateName: istio-success-rate
+    args:
+    - name: service-name
+      value: demo-app-preview.demo.svc.cluster.local
+    - name: namespace
+      value: demo

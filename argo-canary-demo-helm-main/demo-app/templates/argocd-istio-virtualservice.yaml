@@ -1,0 +1,19 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: argoapp-virtualservice
+spec:
+  gateways: 
+    - demo-app-gateway
+  hosts:
+    - {{ .Values.argocd.host }}
+  tls:
+    - match:
+        - port: 443
+          sniHosts:
+            - "{{ .Values.argocd.host }}"
+      route:
+        - destination:
+            host: argocd-server.argocd.svc.cluster.local
+            port:
+              number: 443          

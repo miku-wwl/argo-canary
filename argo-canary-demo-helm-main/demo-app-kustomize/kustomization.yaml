@@ -1,0 +1,11 @@
+resources:
+  - base
+  - rollout.yaml
+  - app-istio-virtualservice.yaml
+
+images:
+  - name: roshaneishara/argo-canary-demo-app
+    newTag: v57
+
+patchesStrategicMerge:
+  - patch-replicas.yaml

@@ -1,0 +1,21 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: demo-app
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  gateways:
+    - demo-app-gateway
+  hosts:
+    - demo-app.demo.svc.cluster.local
+    - demo-app.mario.com
+  http:
+    - name: http
+      route:
+        - destination:
+            host: demo-app-stable
+          weight: 100
+        - destination:
+            host: demo-app-canary
+          weight: 0

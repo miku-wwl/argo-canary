@@ -1,0 +1,28 @@
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: demo-app-gateway
+spec:
+  selector:
+    istio: ingress
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "demo-app.mario.com"
+  - port:
+      number: 80
+      name: prom-http
+      protocol: HTTP
+    hosts:
+    - "prometheus.mario.com"
+  - port:
+      number: 443
+      name: https
+      protocol: TLS
+    hosts:
+    - "argo-demo.mario.com"
+    tls:
+      mode: PASSTHROUGH

@@ -1,0 +1,53 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: demo-app
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  replicas: {{ .Values.replicaCount }}
+
+  strategy:
+{{- $strategy := default "rolling-update" .Values.deploymentStrategy -}}
+{{- if eq $strategy "canary" }}
+    canary:
+
+      canaryService: demo-app-canary
+      stableService:  
+
+      trafficRouting:
+        istio:
+          virtualService:
+            name: demo-app
+            routes:
+              - http
+
+      steps:
+{{ toYaml .Values.canary.rollout.steps | indent 8 }}
+{{- else if eq $strategy "blue-green" }}
+    blueGreen:
+      activeService: demo-app-active
+      previewService: demo-app-preview
+      autoPromotionEnabled: false
+      scaleDownDelaySeconds: 30
+      prePromotionAnalysis:
+{{ toYaml .Values.bluegreen.prePromotionAnalysis | indent 8 }}
+
+{{- end }}
+
+
+  selector:
+    matchLabels:
+      app: demo-app
+
+  template:
+    metadata:
+      labels:
+        app: demo-app
+    spec:
+      containers:
+        - name: demo-app
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.service.targetPort }}

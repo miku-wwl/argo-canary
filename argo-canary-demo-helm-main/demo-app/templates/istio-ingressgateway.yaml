@@ -1,0 +1,28 @@
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: demo-app-gateway
+spec:
+  selector:
+    istio: ingress # use Istio's default ingressgateway
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "{{ .Values.app.host }}"
+  - port:
+      number: 80
+      name: prom-http
+      protocol: HTTP
+    hosts:
+    - "{{ .Values.prometheus.host }}"    
+  - port: 
+      number: 443
+      name: https
+      protocol: TLS
+    hosts:
+    - "{{ .Values.argocd.host }}"
+    tls:
+      mode: PASSTHROUGH
