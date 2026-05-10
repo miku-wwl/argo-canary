@@ -2,10 +2,14 @@
 name: Build and Push Image
 
 # 触发条件：代码推送到 main 分支时自动运行
+# 这里加了 paths 过滤，只允许应用代码触发，解决无限循环！
 on:
   push:
     branches:
       - main
+    paths:
+      - "argo-canary-demo-app-main/**"
+      - ".github/workflows/build.yaml"
 
 # 环境变量：统一管理镜像名称
 env:
