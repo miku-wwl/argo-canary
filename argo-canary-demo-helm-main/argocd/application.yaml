@@ -9,9 +9,9 @@ spec:
   project: default
 
   source:
-    repoURL: https://github.com/mri-fernando/argo-canary-demo-helm
+    repoURL: https://github.com/miku-wwl/argo-canary.git
     targetRevision: HEAD
-    path: demo-app
+    path: argo-canary-demo-helm-main/demo-app
 
   destination:
     server: https://kubernetes.default.svc

@@ -10,8 +10,8 @@ prometheus:
   host: prometheus.mario.com
 
 image:
-  repository: roshaneishara/argo-canary-demo-app
-  tag: v37
+  repository: minglai/argo-canary-demo-app
+  tag: latest
   pullPolicy: Always
 
 service:

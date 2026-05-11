@@ -13,7 +13,7 @@ spec:
     canary:
 
       canaryService: demo-app-canary
-      stableService:  
+      stableService: demo-app-stable
 
       trafficRouting:
         istio:
