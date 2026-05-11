@@ -231,6 +231,8 @@ curl -H 'Host: demo-app.mario.com' http://<VM_IP>:<NODEPORT>/
 
 然后 ArgoCD 会拉到新的 chart/values，Rollout 会按步骤推进。
 
+> 注意：如果你在集群里的 `Application` 上手动设置过 `spec.source.helm.parameters`（例如把 `image.tag` 固定成 `latest`），那么 workflow 回写的 `values.yaml`（例如 tag 从 v37→v38）可能不会生效。见第 12.4 节排查。
+
 ---
 
 ## 12. 常见问题排查
@@ -266,6 +268,87 @@ kubectl -n demo describe pod -l app=demo-app | sed -n '1,220p'
 ```
 
 - 常见原因：镜像拉取慢/失败、DNS、代理、或 registry 限速。
+
+### 12.4 改了 app.py，但 ArgoCD 没“自动部署”/Pod 没替换
+
+这类问题通常不是 ArgoCD “没拉取”，而是 **你改动的内容并没有让「期望态渲染结果」发生变化**。
+
+先明确一件事：本 Demo 的 `Application` 追踪的是 Helm chart 路径：
+
+```bash
+kubectl -n argocd get application demo-app \
+  -o jsonpath='{.spec.source.repoURL}{"\n"}{.spec.source.path}{"\n"}{.spec.source.targetRevision}{"\n"}'
+```
+
+所以你只修改 `argo-canary-demo-app-main/app.py` 并 push：
+- 如果没有构建并推送 **新镜像**
+- 且没有让 chart 使用 **新 tag/digest**
+
+那么集群里的 Rollout/POD 规范不会变化，K8s 也不会“自动重建 Pod”。
+
+#### 12.4.1 快速判断：ArgoCD 是否已经追到最新 Git
+
+```bash
+kubectl -n argocd get application demo-app \
+  -o jsonpath='{.status.sync.status}{"\n"}{.status.sync.revision}{"\n"}{.status.reconciledAt}{"\n"}'
+```
+
+如果你怀疑 ArgoCD 的 repo cache 没刷新，可以从 `argocd-repo-server` 容器直接查远端 HEAD（不依赖 VM 安装 git）：
+
+```bash
+kubectl -n argocd exec deploy/argocd-repo-server -- \
+  git ls-remote --symref https://github.com/miku-wwl/argo-canary.git HEAD
+```
+
+#### 12.4.2 对比：集群里实际跑的镜像是什么
+
+```bash
+kubectl -n demo get rollout demo-app \
+  -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}{.spec.template.spec.containers[0].imagePullPolicy}{"\n"}'
+
+kubectl -n demo get pods -l app=demo-app \
+  -o jsonpath='{range .items[*]}{.metadata.name}{"  "}{.spec.containers[0].image}{"\n"}{end}'
+```
+
+#### 12.4.3 常见坑：Application 用 Helm 参数覆盖了 values.yaml
+
+如果 `Application` 里存在 Helm 参数覆盖（比如把 tag 固定成 `latest`），那么即使 GitHub Actions 已经把 `values.yaml` 写成 `tag: v38`，渲染出来仍会是 `:latest`，自然不会触发发布。
+
+查看当前覆盖项：
+
+```bash
+kubectl -n argocd get application demo-app \
+  -o jsonpath='{range .spec.source.helm.parameters[*]}{.name}={.value}{"\n"}{end}'
+```
+
+如果你看到类似：
+- `image.tag=latest`
+
+那就说明 chart 的 `values.yaml` 可能被覆盖了。
+
+修复方式（二选一）：
+
+1) **删除覆盖**（让 chart 的 `values.yaml` 生效）：
+
+```bash
+kubectl -n argocd patch application demo-app --type=json \
+  -p='[{"op":"remove","path":"/spec/source/helm/parameters"}]'
+```
+
+2) **显式把 tag 改成你要的值**（例如 `v38`）：
+
+```bash
+kubectl -n argocd patch application demo-app --type=merge \
+  -p '{"spec":{"source":{"helm":{"parameters":[{"name":"image.tag","value":"v38"}]}}}}'
+```
+
+改完后建议强制刷新一次，让 ArgoCD 重新拉取并重新渲染：
+
+```bash
+kubectl -n argocd annotate application demo-app argocd.argoproj.io/refresh=hard --overwrite
+```
+
+> 经验法则：为了稳定观察金丝雀过程，尽量每次发布都用新 tag（如 v39/v40），不要依赖 `:latest`。
 
 ---
 
