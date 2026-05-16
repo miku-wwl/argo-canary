@@ -1,6 +1,6 @@
 # argo-canary
 
-> 说明：本 README 已内嵌中文本地打通教程；原文件 [local-walkthrough.zh-CN.md](local-walkthrough.zh-CN.md) 保留不删，作为备份。
+> 说明：本 README 已内嵌中文本地打通教程；原文件 [local-walkthrough.zh-CN.md](local-walkthrough.zh-CN.md) 。
 
 ---
 
