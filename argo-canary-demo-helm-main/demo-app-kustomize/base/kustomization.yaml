@@ -1,0 +1,10 @@
+resources:
+  - service.yaml
+  - service-stable.yaml
+  - service-canary.yaml
+  - argo-analysis-tpl.yaml
+  - demo-app-istio-metrics-svc.yaml
+  - istio-servicemonitor.yaml
+  - istio-ingressgateway.yaml
+  - prometheus-istio-virtualservice.yaml
+  - argocd-istio-virtualservice.yaml

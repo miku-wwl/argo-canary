@@ -8,6 +8,14 @@ app:
 
 prometheus:
   host: prometheus.mario.com
+  analysisAddress: http://prometheus-kube-prometheus-prometheus.monitoring:9090
+  serviceMonitorNamespace: monitoring
+  serviceMonitorLabels:
+    release: prometheus
+
+istio:
+  gatewaySelector:
+    istio: ingress
 
 image:
   repository: minglai/argo-canary-demo-app
@@ -25,7 +33,7 @@ deploymentStrategy: canary # Change to "blue-green" to switch to blue-green depl
 
 canary: 
   rollout:
-    #Template with Analysis steps with prometheus metrics to automatically promote or rollback based on the success rate of the canary version
+    # Prometheus-backed steps automatically promote or abort based on canary success rate.
     steps:
       - setWeight: 10
       - pause: { duration: 30s }
@@ -48,12 +56,12 @@ canary:
           - name: namespace
             value: demo
 
-    # Template with Manual Promote step (No Prometheus analysis)
-    steps:
+    # Manual-promotion example (replace the steps above temporarily; do not add
+    # a second `steps` key):
     # - setWeight: 10
-    # - pause: {}  # Waits for manual promotion indefinitely
+    # - pause: {}
     # - setWeight: 50
-    # - pause: {duration: 30s}
+    # - pause: { duration: 30s }
 
 bluegreen:
   prePromotionAnalysis:

@@ -4,7 +4,7 @@ metadata:
   name: demo-app-gateway
 spec:
   selector:
-    istio: ingress # use Istio's default ingressgateway
+{{ toYaml .Values.istio.gatewaySelector | indent 4 }}
   servers:
   - port:
       number: 80

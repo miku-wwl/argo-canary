@@ -16,7 +16,7 @@ spec:
 
     provider:
       prometheus:
-        address: http://prometheus-kube-prometheus-prometheus.monitoring:9090
+        address: {{ .Values.prometheus.analysisAddress | quote }}
         query: |
           sum(rate(istio_requests_total{
             reporter="destination",

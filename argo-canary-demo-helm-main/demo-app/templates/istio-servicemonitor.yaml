@@ -2,9 +2,9 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: demo-istio
-  namespace: monitoring
+  namespace: {{ .Values.prometheus.serviceMonitorNamespace }}
   labels:
-    release: prometheus
+{{ toYaml .Values.prometheus.serviceMonitorLabels | indent 4 }}
 spec:
   namespaceSelector:
     matchNames:
