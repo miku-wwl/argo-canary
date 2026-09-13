@@ -19,7 +19,7 @@ istio:
 
 image:
   repository: minglai/argo-canary-demo-app
-  tag: v38
+  tag: v39
   pullPolicy: Always
 
 service:
