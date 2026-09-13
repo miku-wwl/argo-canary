@@ -1,8 +1,8 @@
 # Argo Canary 本地参考环境
 
-本项目是一个 Kubernetes-distribution-agnostic 的 GitOps 渐进式交付示例，依赖 Argo CD、Argo Rollouts、Istio 和 Prometheus-compatible metrics source。
+本项目是一个与 Kubernetes 发行版无关的 GitOps 渐进式交付示例，依赖 Argo CD、Argo Rollouts、Istio 和兼容 Prometheus 的指标源。
 
-本教程只使用已经存在的 Kubernetes 集群。项目不会创建、删除、切换或识别集群。Docker + kind 是推荐的本地参考环境。Reference environment only — not part of the project architecture；kind 集群的创建属于项目边界之外；K3s、AKS、EKS、GKE 或其他兼容 Kubernetes 的发行版也可以作为外部环境。
+本教程只使用已经存在的 Kubernetes 集群。项目不会创建、删除、切换或识别集群。Docker + kind 是推荐的本地参考环境。该环境仅供参考，不属于项目架构；kind 集群的创建属于项目边界之外；K3s、AKS、EKS、GKE 或其他兼容 Kubernetes 的发行版也可以作为外部环境。
 
 ## 1. 前置条件
 
@@ -11,7 +11,7 @@
 - 外部平台已提供 Argo CD、Argo Rollouts、Istio 和 Prometheus-compatible metrics source。
 - 集群允许拉取应用镜像，并且 GitHub/容器 registry 可访问。
 
-先运行 capability-based prerequisite validation：
+先运行基于能力的前置条件验证：
 
 ```shell
 kubectl config current-context
@@ -30,7 +30,7 @@ kubectl -n istio-system get deployment istiod
 kubectl -n monitoring get service prometheus-kube-prometheus-prometheus
 ```
 
-这些命令验证集群能力，不判断集群属于哪一种发行版。最后一条使用 chart 的默认 Prometheus Service 名称；如果外部平台命名不同或 Istio ingress gateway 使用其他 label，请在 Helm values 中设置 `prometheus.analysisAddress`、`prometheus.serviceMonitorNamespace`、`prometheus.serviceMonitorLabels` 和/或 `istio.gatewaySelector`。
+这些命令验证集群能力，不判断集群属于哪一种发行版。最后一条使用 chart 的默认 Prometheus Service 名称；如果外部平台命名不同，或 Istio ingress gateway 使用其他 label，请在 Helm values 中设置 `prometheus.analysisAddress`、`prometheus.serviceMonitorNamespace`、`prometheus.serviceMonitorLabels` 和/或 `istio.gatewaySelector`。
 
 ## 2. 从 Argo CD Application 开始
 
@@ -51,11 +51,11 @@ kubectl -n argocd get application demo-app
 不要在主流程中执行 `kind create cluster`，也不要使用 `kind load docker-image` 或直接 `kubectl apply` 工作负载来替代 GitOps。应用发布路径保持为：
 
 ```text
-Git Push -> GitHub Actions -> Container Registry -> GitOps Helm tag update
-  -> Argo CD -> Argo Rollouts -> Istio -> Prometheus Analysis -> Promote/Abort
+Git 推送 -> GitHub Actions -> 容器镜像仓库 -> GitOps Helm 标签更新
+  -> Argo CD -> Argo Rollouts -> Istio -> Prometheus 分析 -> 晋级/中止
 ```
 
-## 3. 验证 canary
+## 3. 验证金丝雀发布
 
 ```shell
 kubectl -n demo get rollout demo-app
@@ -64,7 +64,7 @@ kubectl -n demo get virtualservice demo-app -o yaml
 kubectl -n demo get analysistemplate istio-success-rate
 ```
 
-默认 canary 步骤为 `10% -> analysis -> 50% -> analysis -> 100%`。Rollout 同时声明 `stableService`、`canaryService` 和 Istio traffic routing；Prometheus AnalysisTemplate 查询 Istio request metrics，并在失败时阻止或回滚发布。
+默认金丝雀发布步骤为 `10% -> analysis -> 50% -> analysis -> 100%`。Rollout 同时声明 `stableService`、`canaryService` 和 Istio 流量路由；Prometheus AnalysisTemplate 查询 Istio 请求指标，并在失败时阻止或回滚发布。
 
 手动观察时可以使用：
 
@@ -74,11 +74,11 @@ kubectl argo rollouts promote demo-app -n demo
 kubectl argo rollouts abort demo-app -n demo
 ```
 
-若要测试手动 promotion，把 `values.yaml` 中自动步骤临时替换为包含 `pause: {}` 的步骤；不要保留重复的 YAML `steps` 键。
+若要测试手动晋级，把 `values.yaml` 中的自动步骤临时替换为包含 `pause: {}` 的步骤；不要保留重复的 YAML `steps` 键。
 
 ## 4. 访问应用
 
-访问方式由外部环境决定。Kind 或其他本地环境可以使用 port-forward：
+访问方式由外部环境决定。Kind 或其他本地环境可以使用端口转发：
 
 ```shell
 kubectl -n demo port-forward svc/demo-app 8081:80
@@ -94,4 +94,4 @@ helm lint infra/helm/demo-app
 helm template demo-app infra/helm/demo-app
 ```
 
-渲染结果应包含 Rollout、非空的 `stableService`/`canaryService`、`trafficRouting.istio`、`demo-app` VirtualService route，以及 `istio-success-rate` AnalysisTemplate。
+渲染结果应包含 Rollout、非空的 `stableService`/`canaryService`、`trafficRouting.istio`、`demo-app` VirtualService 路由，以及 `istio-success-rate` AnalysisTemplate。

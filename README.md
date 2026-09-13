@@ -15,6 +15,15 @@ It demonstrates how an application moves through a canary release while Istio sh
 - The default progression is `10% -> analysis -> 50% -> analysis -> 100%`.
 - A blue/green configuration and an optional manual-promotion example are retained.
 
+## Verified E2E scenarios
+
+The completed runtime validation covers both release paths:
+
+- Successful release: `10% -> Analysis PASS -> 50% -> Analysis PASS -> promotion`
+- Failure path: `real 5xx -> Prometheus degradation -> AnalysisRun Failed -> Rollout Abort -> stable 100%`
+
+See the [verified E2E evidence report](docs/e2e-validation.md) for the recorded commits, workflow run, image digest, Rollout states, AnalysisRun measurements, and final HTTP results.
+
 ## Architecture and boundary
 
 ```text
