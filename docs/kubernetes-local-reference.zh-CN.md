@@ -44,7 +44,7 @@ kubectl label namespace demo istio-injection=enabled --overwrite
 然后只提交 Argo CD Application 入口：
 
 ```shell
-kubectl apply -f argo-canary-demo-helm-main/argocd/application.yaml
+kubectl apply -f infra/argocd/application.yaml
 kubectl -n argocd get application demo-app
 ```
 
@@ -90,8 +90,8 @@ curl http://127.0.0.1:8081/
 ## 5. Helm 静态验证
 
 ```shell
-helm lint argo-canary-demo-helm-main/demo-app
-helm template demo-app argo-canary-demo-helm-main/demo-app
+helm lint infra/helm/demo-app
+helm template demo-app infra/helm/demo-app
 ```
 
 渲染结果应包含 Rollout、非空的 `stableService`/`canaryService`、`trafficRouting.istio`、`demo-app` VirtualService route，以及 `istio-success-rate` AnalysisTemplate。

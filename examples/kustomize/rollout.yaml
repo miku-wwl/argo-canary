@@ -54,7 +54,7 @@ spec:
     spec:
       containers:
         - name: demo-app
-          image: "roshaneishara/argo-canary-demo-app:v57"
+          image: "minglai/argo-canary-demo-app:v57"
           imagePullPolicy: Always
           ports:
             - containerPort: 5000

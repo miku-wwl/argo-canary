@@ -11,7 +11,7 @@ spec:
   source:
     repoURL: https://github.com/miku-wwl/argo-canary.git
     targetRevision: HEAD
-    path: argo-canary-demo-helm-main/demo-app
+    path: infra/helm/demo-app
 
   destination:
     server: https://kubernetes.default.svc

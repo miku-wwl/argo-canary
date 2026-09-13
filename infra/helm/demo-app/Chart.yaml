@@ -4,6 +4,3 @@ description: Argo Rollouts Canary Demo App
 type: application
 version: 0.1.0
 appVersion: 38.0.0
-maintainers:
-  - name: Mario Fernando
-    email: roshane.ishara@gmail.com

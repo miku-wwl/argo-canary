@@ -1,19 +1,18 @@
-# 工作流名称：构建并推送 Docker 镜像
 name: Build and Push Image
 
-# 触发条件：代码推送到 main 分支时自动运行
-# 这里加了 paths 过滤，只允许应用代码触发，解决无限循环！
 on:
   push:
     branches:
       - main
     paths:
-      - "argo-canary-demo-app-main/**"
+      - "src/**"
+      - "tests/**"
+      - "Dockerfile"
+      - "requirements.txt"
+      - "requirements-lock.txt"
       - ".github/workflows/build.yaml"
 
-# 环境变量：统一管理镜像名称
 env:
-  # 👇 这是你的 Docker Hub 镜像名
   IMAGE: minglai/argo-canary-demo-app
 
 jobs:
@@ -21,64 +20,56 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. 拉取当前项目的代码
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. 自动生成版本号
       - name: Generate version
         id: version
         run: |
           echo "VERSION=v${{ github.run_number }}" >> $GITHUB_OUTPUT
           echo "SEMANTIC_VERSION=${{ github.run_number }}.0.0" >> $GITHUB_OUTPUT
 
-      # 3. 登录 Docker Hub
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: minglai
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 4. 构建 Docker 镜像并推送到 Docker Hub
       - name: Build and Push Image
         uses: docker/build-push-action@v5
         with:
-          context: ./argo-canary-demo-app-main/
+          context: .
           push: true
           tags: |
             ${{ env.IMAGE }}:${{ steps.version.outputs.VERSION }}
             ${{ env.IMAGE }}:latest
 
-      # ==============================================
-      # 👇 下面是 GitOps 自动更新 HELM 仓
-      # ==============================================
-
-      # 拉取你自己的 GitOps 仓库
       - name: Checkout GitOps repo
         uses: actions/checkout@v4
         with:
-          repository: miku-wwl/argo-canary       # 你的仓库
-          token: ${{ secrets.GH_PAT }}           # 你刚生成的令牌
+          repository: miku-wwl/argo-canary
+          token: ${{ secrets.GH_PAT }}
           path: gitops
 
-      # 更新 Helm values.yaml 里的镜像版本 tag
       - name: Update Helm values
         run: |
-          cd gitops/argo-canary-demo-helm-main/demo-app
+          cd gitops/infra/helm/demo-app
           sed -i "s/tag:.*/tag: ${{ steps.version.outputs.VERSION }}/" values.yaml
 
-      # 更新 Helm Chart.yaml 里的 appVersion
       - name: Update Helm Chart Version
         run: |
-          cd gitops/argo-canary-demo-helm-main/demo-app
+          cd gitops/infra/helm/demo-app
           sed -i "s/appVersion:.*/appVersion: ${{ steps.version.outputs.SEMANTIC_VERSION }}/" Chart.yaml
 
-      # 提交并推送到你的 Git 仓库
       - name: Commit and Push new Helm values
         run: |
           cd gitops
           git config user.name "github-actions"
           git config user.email "miku-wwl@users.noreply.github.com"
-          git add . || echo "No changes to add"
-          git commit -m "Update image to ${{ steps.version.outputs.VERSION }}" || echo "No changes to commit"
-          git push || echo "No changes to push"
+          git add infra/helm/demo-app/values.yaml infra/helm/demo-app/Chart.yaml
+          if git diff --cached --quiet; then
+            echo "No GitOps changes to commit"
+          else
+            git commit -m "Update image to ${{ steps.version.outputs.VERSION }}"
+            git push origin HEAD:main
+          fi

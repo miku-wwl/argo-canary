@@ -1,9 +1,8 @@
 """Unit tests for the Flask demo application."""
 from unittest.mock import patch
 
-# Patch Flask.run before importing to prevent server start during import
-with patch("flask.Flask.run"):
-    from app import app
+# Importing the app must not start the server.
+from src.app import app
 
 
 import pytest
@@ -53,27 +52,27 @@ class TestHealthRoute:
 class TestErrorRoute:
     """Tests for the '/error' route."""
 
-    @patch("app.random.random", return_value=0.5)
+    @patch("src.app.random.random", return_value=0.5)
     def test_error_returns_ok_when_random_high(self, mock_random, client):
         """Error route should return 200 when random >= 0.3."""
         response = client.get("/error")
         assert response.status_code == 200
         assert response.data == b"ok"
 
-    @patch("app.random.random", return_value=0.1)
+    @patch("src.app.random.random", return_value=0.1)
     def test_error_returns_500_when_random_low(self, mock_random, client):
         """Error route should return 500 when random < 0.3."""
         response = client.get("/error")
         assert response.status_code == 500
         assert response.data == b"error"
 
-    @patch("app.random.random", return_value=0.29)
+    @patch("src.app.random.random", return_value=0.29)
     def test_error_boundary_just_below_threshold(self, mock_random, client):
         """Error route should return 500 when random is just below 0.3."""
         response = client.get("/error")
         assert response.status_code == 500
 
-    @patch("app.random.random", return_value=0.3)
+    @patch("src.app.random.random", return_value=0.3)
     def test_error_boundary_at_threshold(self, mock_random, client):
         """Error route should return 200 when random equals 0.3."""
         response = client.get("/error")
@@ -85,7 +84,7 @@ class TestAppConfiguration:
 
     def test_app_is_flask_instance(self):
         """App should be a Flask application instance."""
-        assert app.name == "app"
+        assert app.name == "src.app"
 
     def test_app_has_home_route(self):
         """App should have a '/' route registered."""

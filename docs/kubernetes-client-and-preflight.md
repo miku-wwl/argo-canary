@@ -41,4 +41,4 @@ kubectl get crd applications.argoproj.io rollouts.argoproj.io \
   servicemonitors.monitoring.coreos.com
 ```
 
-继续使用主 [README](README.md) 的 capability-based prerequisite validation 和 GitOps 流程。
+继续使用主 [README](../README.md) 的 capability-based prerequisite validation 和 GitOps 流程。

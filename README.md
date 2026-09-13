@@ -92,10 +92,10 @@ The namespace and platform service names above are chart defaults, not Kubernete
 3. Bootstrap the Argo CD `Application` once from the repository:
 
    ```shell
-   kubectl apply -f argo-canary-demo-helm-main/argocd/application.yaml
+   kubectl apply -f infra/argocd/application.yaml
    ```
 
-   This applies only the Argo CD GitOps entry point. The application workload is rendered and reconciled by Argo CD from `argo-canary-demo-helm-main/demo-app`.
+   This applies only the Argo CD GitOps entry point. The application workload is rendered and reconciled by Argo CD from `infra/helm/demo-app`.
 4. For a release, push application changes. GitHub Actions builds and pushes the image, then updates the Helm image tag in Git. Argo CD detects that GitOps change and starts the Rollout.
 5. Observe reconciliation and rollout progress:
 
@@ -119,7 +119,7 @@ The default Helm values keep the existing Argo Rollouts + Istio integration:
 
 The `AnalysisTemplate` queries Istio request metrics from the configured Prometheus-compatible endpoint. A failed analysis counts against `failureLimit`; a successful analysis allows the rollout to continue. Argo CD ignores the Rollouts-controlled VirtualService route weights so reconciliation does not fight traffic progression.
 
-For a manual-promotion experiment, temporarily replace the automated `canary.rollout.steps` in `argo-canary-demo-helm-main/demo-app/values.yaml` with a step containing `pause: {}`. Promote or abort with:
+For a manual-promotion experiment, temporarily replace the automated `canary.rollout.steps` in `infra/helm/demo-app/values.yaml` with a step containing `pause: {}`. Promote or abort with:
 
 ```shell
 kubectl argo rollouts promote demo-app -n demo
@@ -146,19 +146,27 @@ On managed Kubernetes, an external LoadBalancer or ingress implementation is sup
 From the repository root:
 
 ```shell
-helm lint argo-canary-demo-helm-main/demo-app
-helm template demo-app argo-canary-demo-helm-main/demo-app > rendered-demo-app.yaml
+helm lint infra/helm/demo-app
+helm template demo-app infra/helm/demo-app > rendered-demo-app.yaml
 ```
 
 Inspect the rendered output for `kind: Rollout`, non-empty `stableService` and `canaryService`, `trafficRouting.istio`, the `demo-app` VirtualService route, and `kind: AnalysisTemplate`. `rendered-demo-app.yaml` is a local artifact and should not be committed.
 
 ## Repository layout
 
-- `argo-canary-demo-app-main/` — Flask demo application and container build.
-- `argo-canary-demo-helm-main/demo-app/` — Helm chart and platform capability resources.
-- `argo-canary-demo-helm-main/argocd/application.yaml` — Argo CD GitOps entry point.
-- `argo-canary-demo-helm-main/demo-app-kustomize/` — retained manifest-based example with the same canary concepts.
-- `kubernetes-local-reference.zh-CN.md` — concise Chinese local-reference walkthrough.
-- `kubernetes-client-and-preflight.md` — external client and capability preflight note.
+```text
+argo-canary/
+├── src/                         # Application source
+├── tests/                       # Application tests
+├── infra/
+│   ├── helm/demo-app/            # Canonical Helm/platform resources
+│   └── argocd/application.yaml   # GitOps entry point
+├── examples/kustomize/           # Alternative/reference implementation
+├── docs/                         # Extended docs and screenshots
+├── .github/workflows/            # CI/CD and GitOps update automation
+├── Dockerfile
+├── requirements.txt
+└── README.md
+```
 
-See [argo-canary-demo-helm-main/README.md](argo-canary-demo-helm-main/README.md) for chart-scoped details.
+See [docs/kubernetes-client-and-preflight.md](docs/kubernetes-client-and-preflight.md) and [docs/kubernetes-local-reference.zh-CN.md](docs/kubernetes-local-reference.zh-CN.md) for extended guidance.
