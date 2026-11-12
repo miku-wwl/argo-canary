@@ -47,7 +47,10 @@ class Traffic:
                 connection.request("GET", self.url.path or "/", headers={"Host": self.host})
                 response = connection.getresponse()
                 body = response.read()
-                release = json.loads(body).get("release", "unknown")
+                try:
+                    release = json.loads(body).get("release", "unknown")
+                except ValueError:
+                    release = "unknown"
                 with self.lock:
                     self.counts[release] += 1
                     self.codes[response.status] += 1
@@ -169,7 +172,8 @@ class Lab:
         executable = shutil.which("kubectl-argo-rollouts") or shutil.which("kubectl-argo-rollouts.exe")
         if not executable:
             raise RuntimeError("Install the pinned kubectl-argo-rollouts plugin")
-        self.log("manual " + operation, output=command(executable, operation, "demo-app",
+        action = [operation, "rollout"] if operation == "retry" else [operation]
+        self.log("manual " + operation, output=command(executable, *action, "demo-app",
                  "--context", self.args.context, "-n", "demo"))
 
     def analysis_runs(self):
@@ -192,6 +196,12 @@ class Lab:
         return result["data"]["result"]
 
     def selectors(self):
+        def proxies_ready():
+            pods = json.loads(self.k("-n", "demo", "get", "pods", "-l", "app=demo-app", "-o", "json"))["items"]
+            return pods and all(any(c["name"] == "istio-proxy" and c["ready"]
+                for c in p.get("status", {}).get("containerStatuses", []))
+                for p in pods if not p["metadata"].get("deletionTimestamp"))
+        self.wait("application proxies Ready", proxies_ready)
         rollout = self.rollout()["status"]
         stable = self.obj("service", "demo-app-stable")["spec"]["selector"]["rollouts-pod-template-hash"]
         canary = self.obj("service", "demo-app-canary")["spec"]["selector"]["rollouts-pod-template-hash"]
