@@ -5,6 +5,7 @@ metadata:
   name: {{ $name }}
   annotations:
     argo-canary.lab/hpa-enabled: {{ .Values.autoscaling.enabled | quote }}
+    argocd.argoproj.io/sync-options: ServerSideApply=true
   labels:
     {{- include "demo.labels" . | nindent 4 }}
 spec:
