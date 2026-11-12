@@ -343,6 +343,10 @@ class Lab:
         self.log("no-data safely paused", analysis=self.analyses(), pause_conditions=status.get("pauseConditions"))
         with self.load() as load:
             time.sleep(25)
+            # v1.10 retry clears an Abort. It does not rerun an Inconclusive
+            # step; promote would skip that analysis. Abort + Retry re-evaluates.
+            self.cli("abort")
+            self.wait("no-data recovery restored Stable", lambda: self.weights() == [100, 0])
             self.cli("retry")
             self.healthy()
             self.log("EXP-05 PASS", traffic=load.summary(), analysis=self.analyses())
