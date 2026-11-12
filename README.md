@@ -87,7 +87,7 @@ Rollouts 手工 Pause/Promote 与 GitHub Environment 审批是两个独立控制
 python -m pytest -q
 helm lint infra/helm/demo-app --strict
 helm template demo-app infra/helm/demo-app -n demo > .local/rendered.yaml
-kubectl --context kind-argo-canary-local apply --dry-run=server -f .local/rendered.yaml
+kubectl --context kind-argo-canary-local -n demo apply --dry-run=server -f .local/rendered.yaml
 ```
 
 CI 还运行 actionlint、Blue/Green 渲染、digest / OCI revision 校验和真实容器 HTTP 检查。静态检查不能代替集群实验。

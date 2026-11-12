@@ -130,7 +130,7 @@ jobs:
         run: |
           set -euo pipefail
           gh api "repos/$REPOSITORY/environments/production" --jq '.protection_rules' | jq -e 'any(.type == "required_reviewers" and (.reviewers | length > 0))'
-          git diff --exit-code "$SOURCE_SHA" HEAD -- src Dockerfile requirements.txt requirements-lock.txt
+          git diff --exit-code "$SOURCE_SHA" HEAD -- src tests Dockerfile requirements.txt requirements-lock.txt infra/helm/demo-app/templates infra/helm/demo-app/Chart.yaml infra/helm/demo-app/values.yaml infra/helm/demo-app/values.schema.json .github/workflows/build.yaml
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
