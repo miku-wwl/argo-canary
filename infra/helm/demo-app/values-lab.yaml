@@ -1,0 +1,7 @@
+app:
+  release: healthy-1794467872526
+  faultMode: healthy
+image:
+  digest: sha256:3151228b5197b2f89c62767b02585bb32177c7c2cfaee262272b351fe5c01ba8
+canary:
+  manualApproval: false

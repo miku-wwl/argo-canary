@@ -1,0 +1,6 @@
+image:
+  digest: sha256:406142294d5b399059a326a7df9e98501939407836fc3d8ecbe4dd4145954b30
+  repository: minglai/argo-canary-demo-app
+app:
+  release: 837f0326a7d8
+  faultMode: healthy

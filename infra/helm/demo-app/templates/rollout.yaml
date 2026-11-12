@@ -1,53 +1,124 @@
+{{- $name := include "demo.name" . -}}
 apiVersion: argoproj.io/v1alpha1
 kind: Rollout
 metadata:
-  name: demo-app
+  name: {{ $name }}
   annotations:
-    argocd.argoproj.io/sync-wave: "2"
+    argo-canary.lab/hpa-enabled: {{ .Values.autoscaling.enabled | quote }}
+    argocd.argoproj.io/sync-options: ServerSideApply=true
+  labels:
+    {{- include "demo.labels" . | nindent 4 }}
 spec:
+  {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
-
+  {{- end }}
+  revisionHistoryLimit: 4
+  minReadySeconds: 5
+  progressDeadlineSeconds: 600
+  progressDeadlineAbort: true
+  analysis:
+    successfulRunHistoryLimit: 6
+    unsuccessfulRunHistoryLimit: 6
+  selector:
+    matchLabels:
+      {{- include "demo.selector" . | nindent 6 }}
   strategy:
-{{- $strategy := default "rolling-update" .Values.deploymentStrategy -}}
-{{- if eq $strategy "canary" }}
+    {{- if eq .Values.deploymentStrategy "canary" }}
     canary:
-
-      canaryService: demo-app-canary
-      stableService: demo-app-stable
-
+      dynamicStableScale: {{ .Values.canary.dynamicStableScale }}
+      stableService: {{ $name }}-stable
+      canaryService: {{ $name }}-canary
+      maxSurge: 100%
+      maxUnavailable: 0
+      {{- if not .Values.canary.dynamicStableScale }}
+      scaleDownDelaySeconds: {{ .Values.canary.scaleDownDelaySeconds }}
+      {{- end }}
+      abortScaleDownDelaySeconds: 10
       trafficRouting:
         istio:
           virtualService:
-            name: demo-app
-            routes:
-              - http
-
+            name: {{ $name }}
+            routes: [http]
       steps:
-{{ toYaml .Values.canary.rollout.steps | indent 8 }}
-{{- else if eq $strategy "blue-green" }}
+        # Let the mesh observe new candidate endpoints before assigning traffic.
+        - pause: {duration: 10s}
+        {{- range .Values.canary.weights }}
+        - setWeight: {{ . }}
+        - pause: {duration: {{ $.Values.canary.observationSeconds }}s}
+        {{- if $.Values.analysis.enabled }}
+        - analysis:
+            {{- include "demo.analysis" $ | nindent 12 }}
+        {{- end }}
+        {{- if $.Values.canary.manualApproval }}
+        - pause: {}
+        {{- end }}
+        {{- end }}
+        - setWeight: 100
+    {{- else if eq .Values.deploymentStrategy "blue-green" }}
     blueGreen:
-      activeService: demo-app-active
-      previewService: demo-app-preview
+      activeService: {{ $name }}-active
+      previewService: {{ $name }}-preview
       autoPromotionEnabled: false
-      scaleDownDelaySeconds: 30
+      scaleDownDelaySeconds: {{ .Values.canary.scaleDownDelaySeconds }}
+      abortScaleDownDelaySeconds: 10
+      {{- if .Values.analysis.enabled }}
       prePromotionAnalysis:
-{{ toYaml .Values.bluegreen.prePromotionAnalysis | indent 8 }}
-
-{{- end }}
-
-
-  selector:
-    matchLabels:
-      app: demo-app
-
+        {{- include "demo.analysis" . | nindent 8 }}
+      {{- end }}
+    {{- else }}
+    {{- fail "deploymentStrategy must be canary or blue-green" }}
+    {{- end }}
   template:
     metadata:
       labels:
-        app: demo-app
+        {{- include "demo.selector" . | nindent 8 }}
+        {{- include "demo.labels" . | nindent 8 }}
+      annotations:
+        proxy.istio.io/config: '{"holdApplicationUntilProxyStarts":true}'
+        sidecar.istio.io/proxyCPU: "50m"
+        sidecar.istio.io/proxyMemory: "64Mi"
+        sidecar.istio.io/proxyMemoryLimit: "192Mi"
     spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: demo-app
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: {{ include "demo.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: APP_RELEASE
+              value: {{ .Values.app.release | quote }}
+            - name: FAULT_MODE
+              value: {{ .Values.app.faultMode | quote }}
+            - name: FAULT_DELAY_MS
+              value: {{ .Values.app.faultDelayMs | quote }}
           ports:
-            - containerPort: {{ .Values.service.targetPort }}
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 3
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: 64Mi}

@@ -1,74 +1,60 @@
 replicaCount: 2
-
-argocd:
-  host: argo-demo.mario.com
-
-app:
-  host: demo-app.mario.com
-
-prometheus:
-  host: prometheus.mario.com
-  analysisAddress: http://prometheus-kube-prometheus-prometheus.monitoring:9090
-  serviceMonitorNamespace: monitoring
-  serviceMonitorLabels:
-    release: prometheus
-
-istio:
-  gatewaySelector:
-    istio: ingress
+deploymentStrategy: canary
 
 image:
   repository: minglai/argo-canary-demo-app
   tag: v40
-  pullPolicy: Always
+  digest: sha256:e5503fabcf4536d9af3a8fa425e43f56484f761b8d988be215301ec0a1429a1c
+  pullPolicy: IfNotPresent
+
+app:
+  host: demo-app.local
+  previewHost: preview.demo-app.local
+  release: baseline
+  faultMode: healthy
+  faultDelayMs: 800
 
 service:
   port: 80
   targetPort: 5000
 
-canaryAnalysis:
-  success: 0.99 # Success rate threshold for the analysis template
+istio:
+  gatewaySelector:
+    istio: ingressgateway
 
-deploymentStrategy: canary # Change to "blue-green" to switch to blue-green deployment strategy
+canary:
+  dynamicStableScale: false
+  manualApproval: false
+  weights: [10, 50]
+  observationSeconds: 30
+  scaleDownDelaySeconds: 20
 
-canary: 
-  rollout:
-    # Prometheus-backed steps automatically promote or abort based on canary success rate.
-    steps:
-      - setWeight: 10
-      - pause: { duration: 30s }
-      - analysis:
-          templates:
-          - templateName: istio-success-rate
-          args:
-          - name: service-name
-            value: demo-app-canary.demo.svc.cluster.local
-          - name: namespace
-            value: demo
-      - setWeight: 50
-      - pause: {duration: 30s}
-      - analysis:
-          templates:
-          - templateName: istio-success-rate
-          args:
-          - name: service-name
-            value: demo-app-canary.demo.svc.cluster.local
-          - name: namespace
-            value: demo
+analysis:
+  enabled: true
+  successRate: 0.99
+  p95Milliseconds: 500
+  minimumRequests: 50
+  window: 1m
+  interval: 10s
+  count: 8
+  consecutiveSuccessLimit: 2
+  failureLimit: 1
+  inconclusiveLimit: 5
 
-    # Manual-promotion example (replace the steps above temporarily; do not add
-    # a second `steps` key):
-    # - setWeight: 10
-    # - pause: {}
-    # - setWeight: 50
-    # - pause: { duration: 30s }
+prometheus:
+  analysisAddress: http://prometheus-kube-prometheus-prometheus.monitoring:9090
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: prometheus
+    interval: 10s
 
-bluegreen:
-  prePromotionAnalysis:
-    templates:
-    - templateName: istio-success-rate
-    args:
-    - name: service-name
-      value: demo-app-preview.demo.svc.cluster.local
-    - name: namespace
-      value: demo
+resources:
+  requests: {cpu: 100m, memory: 64Mi}
+  limits: {cpu: "1", memory: 128Mi}
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 60

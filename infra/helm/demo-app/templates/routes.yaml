@@ -1,0 +1,69 @@
+{{- $name := include "demo.name" . -}}
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: {{ $name }}-gateway
+  labels:
+    {{- include "demo.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- toYaml .Values.istio.gatewaySelector | nindent 4 }}
+  servers:
+    - port: {number: 80, name: http, protocol: HTTP}
+      hosts:
+        - {{ .Values.app.host | quote }}
+        {{- if eq .Values.deploymentStrategy "blue-green" }}
+        - {{ .Values.app.previewHost | quote }}
+        {{- end }}
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "demo.labels" . | nindent 4 }}
+spec:
+  gateways: [{{ $name }}-gateway]
+  hosts: [{{ .Values.app.host | quote }}]
+  http:
+    - name: http
+      # The demo exposes idempotent GETs. Retry transient routing failures;
+      # deliberately injected HTTP 500s remain visible without retries.
+      retries:
+        attempts: 2
+        retryOn: connect-failure,refused-stream,reset,503
+      route:
+        {{- if eq .Values.deploymentStrategy "canary" }}
+        - destination:
+            host: {{ $name }}-stable
+            port: {number: {{ .Values.service.port }}}
+          weight: 100
+        - destination:
+            host: {{ $name }}-canary
+            port: {number: {{ .Values.service.port }}}
+          weight: 0
+        {{- else }}
+        - destination:
+            host: {{ $name }}-active
+            port: {number: {{ .Values.service.port }}}
+          weight: 100
+        {{- end }}
+{{- if eq .Values.deploymentStrategy "blue-green" }}
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: {{ $name }}-preview
+  labels:
+    {{- include "demo.labels" . | nindent 4 }}
+spec:
+  gateways: [{{ $name }}-gateway]
+  hosts: [{{ .Values.app.previewHost | quote }}]
+  http:
+    - name: preview
+      route:
+        - destination:
+            host: {{ $name }}-preview
+            port: {number: {{ .Values.service.port }}}
+          weight: 100
+{{- end }}

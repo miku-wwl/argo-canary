@@ -1,0 +1,37 @@
+{{- if .Values.prometheus.serviceMonitor.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "demo.name" . }}-metrics
+  labels:
+    {{- include "demo.labels" . | nindent 4 }}
+    app: {{ include "demo.name" . }}-metrics
+spec:
+  selector:
+    {{- include "demo.selector" . | nindent 4 }}
+  ports:
+    - name: http-envoy-prom
+      port: 15090
+      targetPort: 15090
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "demo.name" . }}-istio
+  labels:
+    {{- include "demo.labels" . | nindent 4 }}
+    {{- toYaml .Values.prometheus.serviceMonitor.labels | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ include "demo.name" . }}-metrics
+  namespaceSelector:
+    matchNames: [{{ .Release.Namespace }}]
+  endpoints:
+    - port: http-envoy-prom
+      path: /stats/prometheus
+      interval: {{ .Values.prometheus.serviceMonitor.interval }}
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_label_rollouts_pod_template_hash]
+          targetLabel: rollout_hash
+{{- end }}
