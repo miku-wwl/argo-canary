@@ -140,12 +140,13 @@ class Lab:
         self.wait("Rollout Healthy", lambda: self.rollout().get("status", {}).get("phase") == "Healthy")
         self.sync()
 
-    def release(self, label, **changes):
+    def release(self, label, *, new_revision=True, **changes):
         if command("git", "status", "--porcelain", "--", str(VALUES)):
             raise RuntimeError("Preserve existing values-lab.yaml changes before running experiments")
         values = yaml.safe_load(VALUES.read_text(encoding="utf-8")) or {}
-        values.setdefault("app", {}).update(release=f"{label}-{time.time_ns() // 1000000}",
-                                             faultMode="healthy")
+        if new_revision:
+            values.setdefault("app", {}).update(release=f"{label}-{time.time_ns() // 1000000}",
+                                                 faultMode="healthy")
         for key, value in changes.items():
             section, item = key.split("__", 1)
             values.setdefault(section, {})[item] = value
@@ -315,7 +316,7 @@ class Lab:
     def manual(self):
         self.healthy()
         with self.load() as load:
-            sha, _ = self.release("manual", canary__manualApproval=True)
+            sha, candidate = self.release("manual", canary__manualApproval=True, canary__dynamicStableScale=True)
             def gate():
                 rollout = self.rollout()["status"]
                 return rollout.get("phase") == "Paused" and any(
@@ -332,10 +333,59 @@ class Lab:
             self.wait("retry reached manual gate", gate)
             self.cli("promote")
             self.wait("second manual gate", lambda: gate() and self.rollout()["status"]["currentStepIndex"] > index)
+            self.connection_comparison(candidate)
             self.cli("promote")
             self.healthy()
             self.log("EXP-02 PASS", traffic=load.summary(), analysis=self.analyses())
             self.revert(sha)
+
+    def connection_comparison(self, candidate):
+        """One temporary L4 Service and an unmeshed client; the app still uses Helm."""
+        service = {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "demo-app-l4", "namespace": "demo"},
+                   "spec": {"selector": {"app": "demo-app"}, "ports": [{"port": 80, "targetPort": 5000}]}}
+        program = '''import collections,http.client,json
+results={}
+for name,host,authority,reuse in [
+    ("l4_reused","demo-app-l4","demo-app.local",True),
+    ("l4_fresh","demo-app-l4","demo-app.local",False),
+    ("istio_reused","istio-ingressgateway.istio-system","demo-app.local",True)]:
+    counts=collections.Counter(); ports=set(); connection=None
+    for _ in range(1000):
+        if connection is None: connection=http.client.HTTPConnection(host,80,timeout=5)
+        connection.request("GET","/",headers={"Host":authority})
+        ports.add(connection.sock.getsockname()[1])
+        response=connection.getresponse(); body=json.loads(response.read())
+        assert response.status==200
+        counts[body["release"]]+=1
+        if not reuse: connection.close(); connection=None
+    if connection: connection.close()
+    results[name]={"releases":dict(counts),"local_ports":len(ports)}
+print(json.dumps(results))
+'''
+        image = self.rollout()["spec"]["template"]["spec"]["containers"][0]["image"]
+        pod = {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "keepalive-client", "namespace": "demo",
+               "annotations": {"sidecar.istio.io/inject": "false"}}, "spec": {"restartPolicy": "Never",
+               "automountServiceAccountToken": False, "securityContext": {"runAsNonRoot": True, "runAsUser": 10001},
+               "containers": [{"name": "client", "image": image, "command": ["python", "-c", program],
+                 "resources": {"requests": {"cpu": "50m", "memory": "32Mi"}, "limits": {"memory": "96Mi"}}}]}}
+        try:
+            self.k("apply", "-f", "-", input=yaml.safe_dump_all([service, pod]))
+            def completed():
+                phase = self.obj("pod", "keepalive-client")["status"]["phase"]
+                if phase == "Failed":
+                    raise RuntimeError(self.k("-n", "demo", "logs", "keepalive-client"))
+                return phase == "Succeeded"
+            self.wait("keep-alive comparison finished", completed, timeout=180)
+            results = json.loads(self.k("-n", "demo", "logs", "keepalive-client"))
+            counts = results["l4_reused"]["releases"]
+            assert len(counts) == 1 and results["l4_reused"]["local_ports"] == 1, results
+            assert results["istio_reused"]["local_ports"] == 1, results
+            for mode in ("l4_fresh", "istio_reused"):
+                fraction = results[mode]["releases"].get(candidate, 0) / 1000
+                assert abs(fraction - .5) < .075, results
+            self.log("EXP-06 PASS", configured_l7_percent=50, results=results)
+        finally:
+            self.k("-n", "demo", "delete", "pod/keepalive-client", "service/demo-app-l4", "--ignore-not-found", "--wait=false")
 
     def no_data(self):
         self.healthy()
@@ -357,10 +407,60 @@ class Lab:
             self.log("EXP-05 PASS", traffic=load.summary(), analysis=self.analyses())
             self.revert(sha)
 
+    def configuration(self):
+        self.healthy()
+        original = self.rollout()["status"]["currentPodHash"]
+        sha, _ = self.release("analysis-values-only", new_revision=False, analysis__p95Milliseconds=450)
+        self.sync()
+        assert self.rollout()["status"]["currentPodHash"] == original
+        self.revert(sha)
+        chart = ROOT / "infra/helm/demo-app/Chart.yaml"
+        if command("git", "status", "--porcelain", "--", str(chart)):
+            raise RuntimeError("Preserve Chart.yaml edits first")
+        metadata = yaml.safe_load(chart.read_text())
+        metadata.update(version="0.2.1", appVersion="metadata-only")
+        chart.write_text(yaml.safe_dump(metadata, sort_keys=False), encoding="utf-8")
+        command("git", "add", str(chart))
+        command("git", "commit", "-m", "lab: Chart metadata-only safety")
+        command("git", "push")
+        sha = command("git", "rev-parse", "HEAD")
+        self.refresh()
+        self.sync()
+        assert self.rollout()["status"]["currentPodHash"] == original
+        self.revert(sha)
+        with self.load():
+            sha, _ = self.release("pod-template-change")
+            self.wait("Pod template created a new revision", lambda: self.rollout()["status"]["currentPodHash"] != original)
+            self.healthy()
+            self.revert(sha)
+        for kind, name in (("rollout", "demo-app"), ("virtualservice", "demo-app"), ("service", "demo-app-stable")):
+            annotation = self.obj(kind, name)["metadata"].get("annotations", {})
+            assert "argocd.argoproj.io/tracking-id" in annotation
+        assert self.weights() == [100, 0]
+        self.log("EXP-09 PASS", unchanged_revision=original)
+
+    def hpa(self):
+        self.healthy()
+        original = self.rollout()["status"]["currentPodHash"]
+        with self.load():
+            sha, _ = self.release("HPA", new_revision=False, autoscaling__enabled=True,
+                                  autoscaling__targetCPUUtilizationPercentage=1)
+            self.sync()
+            def scaled():
+                hpa = self.obj("hpa").get("status", {})
+                active = any(c["type"] == "ScalingActive" and c["status"] == "True" for c in hpa.get("conditions", []))
+                return active and hpa.get("currentReplicas", 0) >= 3 and self.rollout()["spec"]["replicas"] >= 3
+            self.wait("HPA scaled the Rollout", scaled, timeout=180)
+            assert self.rollout()["status"]["currentPodHash"] == original
+            self.log("EXP-11 PASS", hpa=self.obj("hpa")["status"], scale=json.loads(
+                self.k("get", "--raw", "/apis/argoproj.io/v1alpha1/namespaces/demo/rollouts/demo-app/scale")))
+            self.revert(sha)
+            self.wait("Git replica ownership restored", lambda: self.rollout()["spec"]["replicas"] == 2)
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("scenario", choices=["healthy", "manual", "http500", "latency", "no-data", "load"])
+    parser.add_argument("scenario", choices=["healthy", "manual", "http500", "latency", "no-data", "configuration", "hpa", "load"])
     parser.add_argument("--context", default="kind-argo-canary-local")
     parser.add_argument("--url", default="http://127.0.0.1:18080/")
     parser.add_argument("--host", default="demo-app.local")
@@ -374,7 +474,8 @@ def main():
         return
     lab = Lab(args)
     {"healthy": lab.automatic, "manual": lab.manual, "http500": lambda: lab.failure("http500"),
-     "latency": lambda: lab.failure("latency"), "no-data": lab.no_data}[args.scenario]()
+     "latency": lambda: lab.failure("latency"), "no-data": lab.no_data,
+     "configuration": lab.configuration, "hpa": lab.hpa}[args.scenario]()
 
 
 if __name__ == "__main__":

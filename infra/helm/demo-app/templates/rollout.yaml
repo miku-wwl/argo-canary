@@ -37,6 +37,8 @@ spec:
             name: {{ $name }}
             routes: [http]
       steps:
+        # Let the mesh observe new candidate endpoints before assigning traffic.
+        - pause: {duration: 10s}
         {{- range .Values.canary.weights }}
         - setWeight: {{ . }}
         - pause: {duration: {{ $.Values.canary.observationSeconds }}s}

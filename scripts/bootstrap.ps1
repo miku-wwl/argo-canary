@@ -1,4 +1,8 @@
-param([string]$ClusterName = 'argo-canary-local')
+param(
+    [string]$ClusterName = 'argo-canary-local',
+    [string]$GitOpsRef = 'main',
+    [switch]$DeployApplication
+)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $dockerBin = 'C:\Program Files\Docker\Docker\resources\bin'
@@ -35,6 +39,14 @@ foreach ($entry in @(
 )) { Run helm @('repo', 'add', $entry[0], $entry[1], '--force-update') }
 Run helm @('repo', 'update')
 New-Item -ItemType Directory -Path "$repo/.local" -Force | Out-Null
+New-Item -ItemType Directory -Path "$repo/.local/bin" -Force | Out-Null
+$plugin = "$repo/.local/bin/kubectl-argo-rollouts.exe"
+$pluginHash = 'd41f9e4823f32e9270f4b9257d61f2ccb96e4097f2b4f8bc4ff39f01f1d4a90f'
+if (-not (Test-Path $plugin) -or (Get-FileHash $plugin -Algorithm SHA256).Hash.ToLower() -ne $pluginHash) {
+    Invoke-WebRequest -Uri 'https://github.com/argoproj/argo-rollouts/releases/download/v1.10.2/kubectl-argo-rollouts-windows-amd64' -OutFile $plugin
+    if ((Get-FileHash $plugin -Algorithm SHA256).Hash.ToLower() -ne $pluginHash) { throw 'Rollouts plugin checksum mismatch' }
+}
+$env:PATH = "$repo/.local/bin;$env:PATH"
 Run python @('-c', 'import pathlib,sys,yaml; d=yaml.safe_load(pathlib.Path(sys.argv[1]).read_text()); p=pathlib.Path(sys.argv[2]); [(p/(k+".yaml")).write_text(yaml.safe_dump(v)) for k,v in d.items()]', "$repo/infra/local/platform.yaml", "$repo/.local")
 function Install([string]$Release, [string]$Chart, [string]$Namespace, [string]$Version, [string[]]$Extra = @()) {
     Run helm (@('upgrade', '--install', $Release, $Chart, '--kube-context', $context, '--namespace', $Namespace, '--create-namespace', '--version', $Version, '--wait', '--timeout', '8m') + $Extra)
@@ -49,4 +61,8 @@ Install metrics-server metrics-server/metrics-server kube-system 3.13.0 @('--set
 & kubectl --context $context create namespace demo --dry-run=client -o yaml | & kubectl --context $context apply -f -
 if ($LASTEXITCODE -ne 0) { throw 'Namespace creation failed' }
 Run kubectl @('--context', $context, 'label', 'namespace', 'demo', 'istio-injection=enabled', '--overwrite')
+if ($DeployApplication) {
+    Run python @('-c', 'import pathlib,sys,yaml; a=yaml.safe_load(pathlib.Path(sys.argv[1]).read_text()); a["spec"]["source"]["targetRevision"]=sys.argv[3]; a["spec"]["source"]["helm"]["valueFiles"]=["values-lab.yaml"]; pathlib.Path(sys.argv[2]).write_text(yaml.safe_dump(a,sort_keys=False))', "$repo/infra/argocd/application.yaml", "$repo/.local/application-lab.yaml", $GitOpsRef)
+    Run kubectl @('--context', $context, 'apply', '-f', "$repo/.local/application-lab.yaml")
+}
 Write-Output "Ready. Explicit context: $context. Existing default context preserved."
