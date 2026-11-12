@@ -7,6 +7,11 @@ argocd:
       timeout.reconciliation: 20s
       resource.customizations.health.argoproj.io_Rollout: |
         hs = {}
+        if obj.status ~= nil and tostring(obj.status.observedGeneration) ~= tostring(obj.metadata.generation) then
+          hs.status = "Progressing"
+          hs.message = "Waiting for the Rollout controller to observe this generation"
+          return hs
+        end
         if obj.status ~= nil and obj.status.phase ~= nil then
           if obj.status.phase == "Healthy" then hs.status = "Healthy"
           elseif obj.status.phase == "Degraded" then hs.status = "Degraded"

@@ -150,8 +150,8 @@ jobs:
               raise SystemExit("Invalid image digest")
           path = pathlib.Path("infra/helm/demo-app/values-production.yaml")
           values = yaml.safe_load(path.read_text())
-          values["image"] = {"digest": digest}
-          values["app"] = {"release": os.environ["SOURCE_SHA"][:12], "faultMode": "healthy"}
+          values.setdefault("image", {}).update(repository=os.environ["IMAGE"], digest=digest)
+          values.setdefault("app", {}).update(release=os.environ["SOURCE_SHA"][:12], faultMode="healthy")
           path.write_text(yaml.safe_dump(values, sort_keys=False))
           PY
           git config user.name github-actions
