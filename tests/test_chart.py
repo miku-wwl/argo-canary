@@ -94,6 +94,12 @@ def test_hpa_owns_replicas_and_targets_rollout_scale_subresource():
     assert target == {"apiVersion": "argoproj.io/v1alpha1", "kind": "Rollout", "name": "demo-app"}
 
 
+def test_dynamic_stable_scaling_omits_incompatible_scale_down_delay():
+    canary = render("canary.dynamicStableScale=true")["Rollout", "demo-app"]["spec"]["strategy"]["canary"]
+    assert canary["dynamicStableScale"] is True
+    assert "scaleDownDelaySeconds" not in canary
+
+
 def test_schema_rejects_unknown_strategy_and_fault_mode():
     for setting in ("deploymentStrategy=bogus", "app.faultMode=random"):
         result = subprocess.run(["helm", "template", "test", str(CHART), "--set", setting],

@@ -411,11 +411,17 @@ print(json.dumps(results))
         self.healthy()
         sha, _ = self.release("no-traffic", canary__manualApproval=False)
         self.wait("bounded Inconclusive analysis", lambda: any(r["phase"] == "Inconclusive" for r in self.analyses()))
+        self.wait("Inconclusive paused the Rollout", lambda: self.rollout()["status"].get("phase") == "Paused")
         status = self.rollout()["status"]
         assert status["phase"] == "Paused" and not status.get("abort", False)
         assert self.weights() == [90, 10]
         assert not any(r["phase"] == "Failed" for r in self.analyses())
-        self.log("no-data safely paused", analysis=self.analyses(), pause_conditions=status.get("pauseConditions"))
+        sample = self.prom('sum(increase(istio_requests_total{reporter="destination",'
+                           'destination_workload_namespace="demo",rollout_hash="' +
+                           status["currentPodHash"] + '"}[1m]))')
+        assert not sample or float(sample[0]["value"][1]) < 50, sample
+        self.log("no-data safely paused", analysis=self.analyses(), prometheus_samples=sample,
+                 pause_conditions=status.get("pauseConditions"))
         with self.load() as load:
             time.sleep(25)
             # v1.10 retry clears an Abort. It does not rerun an Inconclusive
