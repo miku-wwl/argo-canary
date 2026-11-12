@@ -1,5 +1,7 @@
 app:
-  release: lab-baseline
+  release: healthy-1794463650580
   faultMode: healthy
 image:
   digest: sha256:e5503fabcf4536d9af3a8fa425e43f56484f761b8d988be215301ec0a1429a1c
+canary:
+  manualApproval: false
