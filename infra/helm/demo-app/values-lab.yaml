@@ -1,5 +1,5 @@
 app:
-  release: healthy-1794463915829
+  release: healthy-1794464295764
   faultMode: healthy
 image:
   digest: sha256:e5503fabcf4536d9af3a8fa425e43f56484f761b8d988be215301ec0a1429a1c
