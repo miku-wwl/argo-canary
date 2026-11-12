@@ -199,7 +199,8 @@ class Lab:
         def proxies_ready():
             pods = json.loads(self.k("-n", "demo", "get", "pods", "-l", "app=demo-app", "-o", "json"))["items"]
             return pods and all(any(c["name"] == "istio-proxy" and c["ready"]
-                for c in p.get("status", {}).get("containerStatuses", []))
+                for c in (p.get("status", {}).get("containerStatuses", []) +
+                          p.get("status", {}).get("initContainerStatuses", [])))
                 for p in pods if not p["metadata"].get("deletionTimestamp"))
         self.wait("application proxies Ready", proxies_ready)
         rollout = self.rollout()["status"]
@@ -208,7 +209,8 @@ class Lab:
         assert stable == rollout["stableRS"] and canary == rollout["currentPodHash"] and stable != canary
         pods = json.loads(self.k("-n", "demo", "get", "pods", "-l", "app=demo-app", "-o", "json"))["items"]
         for pod in pods:
-            assert any(c["name"] == "istio-proxy" and c["ready"] for c in pod["status"]["containerStatuses"])
+            statuses = pod["status"].get("containerStatuses", []) + pod["status"].get("initContainerStatuses", [])
+            assert any(c["name"] == "istio-proxy" and c["ready"] for c in statuses)
         slices = json.loads(self.k("-n", "demo", "get", "endpointslices", "-o", "json"))["items"]
         for suffix, expected in (("stable", stable), ("canary", canary)):
             endpoints = [e for s in slices if s["metadata"]["labels"].get("kubernetes.io/service-name") == "demo-app-" + suffix
@@ -229,6 +231,8 @@ class Lab:
             deadline = time.monotonic() + 240
             while time.monotonic() < deadline:
                 weights, counts = self.weights(), load.snapshot()
+                if weights != previous_weights:
+                    self.log("route transition", weights=weights)
                 if weights == previous_weights and weights in ([90, 10], [50, 50]):
                     buckets[weights[1]].update(counts - previous_counts)
                 if weights == [90, 10] and not checked:
@@ -295,7 +299,8 @@ class Lab:
             pods = json.loads(self.k("-n", "demo", "get", "pods", "-l",
                 "rollouts-pod-template-hash=" + stable, "-o", "json"))["items"]
             fresh = [p for p in pods if p["metadata"]["name"] != old and not p["metadata"].get("deletionTimestamp")]
-            return len(fresh) >= 2 and all(p["status"].get("containerStatuses") and all(c["ready"] for c in p["status"]["containerStatuses"]) for p in fresh)
+            return len(fresh) >= 2 and all(any(c["type"] == "Ready" and c["status"] == "True"
+                for c in p["status"].get("conditions", [])) for p in fresh)
         self.wait("replacement Stable Pods Ready", ready)
         pods = json.loads(self.k("-n", "demo", "get", "pods", "-l",
             "rollouts-pod-template-hash=" + stable, "-o", "json"))["items"]

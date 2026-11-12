@@ -20,7 +20,7 @@ argocd:
   notifications:
     enabled: false
   applicationSet:
-    enabled: false
+    replicas: 0
   controller:
     resources:
       requests: {cpu: 100m, memory: 256Mi}

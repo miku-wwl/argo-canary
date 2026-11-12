@@ -38,5 +38,5 @@ spec:
         - '.spec.selector."rollouts-pod-template-hash"'
     - group: argoproj.io
       kind: Rollout
-      jsonPointers:
-        - /spec/replicas
+      jqPathExpressions:
+        - 'select(.metadata.annotations."argo-canary.lab/hpa-enabled" == "true") | .spec.replicas'

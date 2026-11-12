@@ -3,6 +3,8 @@ apiVersion: argoproj.io/v1alpha1
 kind: Rollout
 metadata:
   name: {{ $name }}
+  annotations:
+    argo-canary.lab/hpa-enabled: {{ .Values.autoscaling.enabled | quote }}
   labels:
     {{- include "demo.labels" . | nindent 4 }}
 spec:
@@ -22,6 +24,7 @@ spec:
   strategy:
     {{- if eq .Values.deploymentStrategy "canary" }}
     canary:
+      dynamicStableScale: {{ .Values.canary.dynamicStableScale }}
       stableService: {{ $name }}-stable
       canaryService: {{ $name }}-canary
       maxSurge: 100%

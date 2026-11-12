@@ -4,7 +4,7 @@ deploymentStrategy: canary
 image:
   repository: minglai/argo-canary-demo-app
   tag: v40
-  digest: ""
+  digest: sha256:e5503fabcf4536d9af3a8fa425e43f56484f761b8d988be215301ec0a1429a1c
   pullPolicy: IfNotPresent
 
 app:
@@ -23,6 +23,7 @@ istio:
     istio: ingressgateway
 
 canary:
+  dynamicStableScale: false
   manualApproval: false
   weights: [10, 50]
   observationSeconds: 30
