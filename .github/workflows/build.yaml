@@ -94,8 +94,8 @@ jobs:
           revision=$(docker image inspect "$IMAGE@$DIGEST" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
           test "$revision" = "$SOURCE_SHA"
           docker run -d --name candidate --read-only --tmpfs /tmp -e APP_RELEASE="$SOURCE_SHA" -p 127.0.0.1:5000:5000 "$IMAGE@$DIGEST"
-          trap 'docker rm -f candidate >/dev/null' EXIT
-          curl --fail --retry 15 --retry-connrefused --retry-delay 1 http://127.0.0.1:5000/readyz
+          trap 'docker logs candidate; docker rm -f candidate >/dev/null' EXIT
+          curl --fail --retry 15 --retry-all-errors --retry-delay 1 http://127.0.0.1:5000/readyz
           curl --fail http://127.0.0.1:5000/ | jq -e --arg sha "$SOURCE_SHA" '.release == $sha'
           jq -n --arg image "$IMAGE@$DIGEST" --arg commit "$SOURCE_SHA" --arg run "$RUN_URL" '{image:$image,commit:$commit,run:$run}' >candidate.json
           echo "Verified candidate: $IMAGE@$DIGEST" >>"$GITHUB_STEP_SUMMARY"
