@@ -1,0 +1,5 @@
+# Written only by the production Environment job after human approval.
+image:
+  digest: sha256:617dd67b69dffb2e828eeaf6ac9576b8e21d6406c53a312a9399a8bb8c20a377
+app:
+  release: v40

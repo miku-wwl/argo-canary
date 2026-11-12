@@ -1,0 +1,62 @@
+# Small local profile; these settings do not affect the portable application chart.
+argocd:
+  configs:
+    params:
+      server.insecure: true
+    cm:
+      timeout.reconciliation: 20s
+      resource.customizations.health.argoproj.io_Rollout: |
+        hs = {}
+        if obj.status ~= nil and obj.status.phase ~= nil then
+          if obj.status.phase == "Healthy" then hs.status = "Healthy"
+          elseif obj.status.phase == "Degraded" then hs.status = "Degraded"
+          elseif obj.status.phase == "Paused" then hs.status = "Suspended"
+          else hs.status = "Progressing" end
+          hs.message = obj.status.message or obj.status.phase
+        else hs.status = "Progressing" end
+        return hs
+  dex:
+    enabled: false
+  notifications:
+    enabled: false
+  applicationSet:
+    enabled: false
+  controller:
+    resources:
+      requests: {cpu: 100m, memory: 256Mi}
+      limits: {memory: 768Mi}
+  repoServer:
+    resources:
+      requests: {cpu: 100m, memory: 128Mi}
+      limits: {memory: 512Mi}
+prometheus:
+  grafana:
+    enabled: false
+  alertmanager:
+    enabled: false
+  defaultRules:
+    create: false
+  kubeApiServer:
+    enabled: false
+  kubeControllerManager:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+  kubeProxy:
+    enabled: false
+  nodeExporter:
+    enabled: false
+  kubeStateMetrics:
+    enabled: false
+  prometheus:
+    prometheusSpec:
+      retention: 6h
+      scrapeInterval: 10s
+      evaluationInterval: 10s
+      resources:
+        requests: {cpu: 100m, memory: 256Mi}
+        limits: {memory: 768Mi}
+      serviceMonitorSelectorNilUsesHelmValues: false
+      serviceMonitorNamespaceSelector: {}

@@ -1,0 +1,4 @@
+# Isolated experiment desired state; the production approval job never writes here.
+app:
+  release: lab-baseline
+  faultMode: healthy

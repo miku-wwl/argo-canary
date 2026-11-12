@@ -3,27 +3,40 @@ kind: Application
 metadata:
   name: demo-app
   namespace: argocd
-
 spec:
-
   project: default
-
   source:
     repoURL: https://github.com/miku-wwl/argo-canary.git
-    targetRevision: HEAD
+    targetRevision: main
     path: infra/helm/demo-app
-
+    helm:
+      releaseName: demo-app
+      valueFiles:
+        - values-production.yaml
   destination:
     server: https://kubernetes.default.svc
     namespace: demo
-
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
-
+    syncOptions:
+      - CreateNamespace=true
+      - RespectIgnoreDifferences=true
+    managedNamespaceMetadata:
+      labels:
+        istio-injection: enabled
   ignoreDifferences:
     - group: networking.istio.io
       kind: VirtualService
+      name: demo-app
+      jqPathExpressions:
+        - '.spec.http[] | select(.name == "http").route[].weight'
+    - group: ""
+      kind: Service
+      jqPathExpressions:
+        - '.spec.selector."rollouts-pod-template-hash"'
+    - group: argoproj.io
+      kind: Rollout
       jsonPointers:
-        - /spec/http/0/route
+        - /spec/replicas

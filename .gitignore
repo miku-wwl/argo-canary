@@ -49,3 +49,7 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+
+# Reproducible local runtime output (never commit credentials or generated manifests)
+.local/
+rendered-*.yaml

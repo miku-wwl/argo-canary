@@ -1,0 +1,9 @@
+.git
+.github
+.local
+.pytest_cache
+**/__pycache__
+docs
+tests
+infra
+scripts

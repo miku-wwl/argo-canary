@@ -1,0 +1,21 @@
+{{- $suffixes := list "stable" "canary" -}}
+{{- if eq .Values.deploymentStrategy "blue-green" -}}
+{{- $suffixes = list "active" "preview" -}}
+{{- end -}}
+{{- range $suffixes }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "demo.name" $ }}-{{ . }}
+  labels:
+    {{- include "demo.labels" $ | nindent 4 }}
+spec:
+  selector:
+    {{- include "demo.selector" $ | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $.Values.service.port }}
+      targetPort: http
+      appProtocol: http
+{{- end }}
