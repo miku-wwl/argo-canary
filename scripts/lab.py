@@ -169,13 +169,13 @@ class Lab:
         self.refresh()
         self.healthy()
 
-    def cli(self, operation):
+    def cli(self, operation, name="demo-app", namespace="demo"):
         executable = shutil.which("kubectl-argo-rollouts") or shutil.which("kubectl-argo-rollouts.exe")
         if not executable:
             raise RuntimeError("Install the pinned kubectl-argo-rollouts plugin")
         action = [operation, "rollout"] if operation == "retry" else [operation]
-        self.log("manual " + operation, output=command(executable, *action, "demo-app",
-                 "--context", self.args.context, "-n", "demo"))
+        self.log("manual " + operation, output=command(executable, *action, name,
+                 "--context", self.args.context, "-n", namespace))
 
     def analysis_runs(self):
         runs = json.loads(self.k("-n", "demo", "get", "analysisruns", "-o", "json"))["items"]
@@ -267,6 +267,7 @@ class Lab:
         with self.load() as load:
             sha, candidate = self.release(mode, app__faultMode=mode, canary__manualApproval=False)
             self.wait("automatic abort", lambda: self.rollout().get("status", {}).get("abort") is True)
+            aborted_at = time.monotonic()
             self.wait("Stable traffic restored", lambda: self.weights() == [100, 0])
             self.sync(healthy=False)
             app = self.obj("application", namespace="argocd")["status"]
@@ -282,10 +283,20 @@ class Lab:
                 assert traffic["latency_ms"][candidate]["median"] >= 780
                 assert any(m["name"] == "p95-latency" and m["phase"] == "Failed" for r in runs for m in r["metrics"])
                 assert any(m["name"] == "success-rate" and m["phase"] == "Successful" for r in runs for m in r["metrics"])
-            self.log("EXP-03 PASS" if mode == "http500" else "EXP-04 PASS", analysis=runs, traffic=traffic)
-            with self.load() as recovery:
-                time.sleep(5)
-            assert recovery.summary()["http_status"].get(500, 0) == 0
+            # Kubernetes weights are desired routing state. Observe the Envoy
+            # data plane separately while configuration updates converge.
+            healthy_windows = 0
+            deadline = time.monotonic() + 60
+            while healthy_windows < 2 and time.monotonic() < deadline:
+                with self.load() as recovery:
+                    time.sleep(2)
+                sample = recovery.summary()
+                healthy_windows = healthy_windows + 1 if (
+                    set(sample["http_status"]) == {200} and
+                    sample["requests_by_release"].get(candidate, 0) == 0) else 0
+            assert healthy_windows == 2, sample
+            self.log("EXP-03 PASS" if mode == "http500" else "EXP-04 PASS", analysis=runs, traffic=traffic,
+                     stable_recovery_seconds=round(time.monotonic() - aborted_at, 1))
             self.revert(sha)
             self.replace_stable()
             self.log("EXP-07 PASS", reverted_commit=sha)
@@ -457,10 +468,83 @@ print(json.dumps(results))
             self.revert(sha)
             self.wait("Git replica ownership restored", lambda: self.rollout()["spec"]["replicas"] == 2)
 
+    def bluegreen(self):
+        """A second Argo CD app renders the same Git-sourced Helm chart."""
+        suffix = str(time.time_ns() // 1000000)
+        namespace = "demo-bg-" + suffix
+        active_host, preview_host = "bg-" + suffix + ".local", "preview-" + suffix + ".local"
+        application = yaml.safe_load((ROOT / "infra/argocd/application.yaml").read_text())
+        application["metadata"]["name"] = namespace
+        spec = application["spec"]
+        spec["source"]["targetRevision"] = command("git", "branch", "--show-current")
+        spec["source"]["helm"].update(releaseName="demo-bg", valueFiles=["values-lab.yaml"])
+        spec["destination"]["namespace"] = namespace
+        spec["syncPolicy"]["managedNamespaceMetadata"]["labels"]["argo-canary.lab/experiment"] = "bluegreen"
+        parameters = {"deploymentStrategy": "blue-green", "app.host": active_host,
+                      "app.previewHost": preview_host, "app.release": "bg-baseline", "app.faultMode": "healthy"}
+        def apply():
+            spec["source"]["helm"]["parameters"] = [{"name": k, "value": str(v)} for k, v in parameters.items()]
+            self.k("apply", "-f", "-", input=yaml.safe_dump(application))
+        def rollout():
+            return self.obj("rollout", "demo-bg", namespace)
+        def phase(expected):
+            return rollout().get("status", {}).get("phase") == expected
+        def gate():
+            return phase("Paused") and any(p["reason"] == "BlueGreenPause"
+                for p in rollout()["status"].get("pauseConditions", []))
+        def response_release(host):
+            connection = http.client.HTTPConnection("127.0.0.1", 18080, timeout=5)
+            try:
+                connection.request("GET", "/", headers={"Host": host})
+                response = connection.getresponse()
+                body = json.loads(response.read())
+                return body["release"] if response.status == 200 else None
+            except (ValueError, OSError):
+                return None
+            finally:
+                connection.close()
+        try:
+            apply()
+            self.wait("Blue/Green initialized", lambda: phase("Healthy"))
+            with Traffic(self.args.url, active_host) as active, Traffic(self.args.url, preview_host) as preview:
+                parameters["app.release"] = "bg-candidate-" + suffix
+                apply()
+                self.wait("Blue/Green manual gate", gate)
+                stable = self.obj("service", "demo-bg-active", namespace)["spec"]["selector"]["rollouts-pod-template-hash"]
+                candidate = self.obj("service", "demo-bg-preview", namespace)["spec"]["selector"]["rollouts-pod-template-hash"]
+                assert stable != candidate
+                assert response_release(active_host) == "bg-baseline"
+                runs = json.loads(self.k("-n", namespace, "get", "analysisruns", "-o", "json"))["items"]
+                assert any(r.get("status", {}).get("phase") == "Successful" for r in runs)
+                self.cli("abort", "demo-bg", namespace)
+                self.wait("Blue/Green Abort", lambda: rollout()["status"].get("abort") is True)
+                assert response_release(active_host) == "bg-baseline"
+                self.cli("retry", "demo-bg", namespace)
+                self.wait("Blue/Green retried gate", gate)
+                self.cli("promote", "demo-bg", namespace)
+                self.wait("Blue/Green promoted", lambda: phase("Healthy"))
+                self.wait("Blue/Green active data plane changed", lambda: response_release(active_host) == parameters["app.release"])
+                healthy_release = parameters["app.release"]
+                parameters.update({"app.release": "bg-http500-" + suffix, "app.faultMode": "http500"})
+                apply()
+                self.wait("Blue/Green bad preview aborted", lambda: rollout()["status"].get("abort") is True)
+                assert preview.summary()["http_status"].get(500, 0) >= 50
+                assert response_release(active_host) == healthy_release
+                parameters.update({"app.release": healthy_release, "app.faultMode": "healthy"})
+                apply()
+                self.wait("Blue/Green healthy desired state recovered", lambda: phase("Healthy"))
+                self.log("EXP-10 PASS", active=active.summary(), preview=preview.summary())
+        finally:
+            self.k("-n", "argocd", "delete", "application", namespace, "--ignore-not-found")
+            ns = self.k("get", "namespace", namespace, "--ignore-not-found", "-o", "json")
+            if ns:
+                assert json.loads(ns)["metadata"]["labels"]["argo-canary.lab/experiment"] == "bluegreen"
+                self.k("delete", "namespace", namespace, "--timeout=120s")
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("scenario", choices=["healthy", "manual", "http500", "latency", "no-data", "configuration", "hpa", "load"])
+    parser.add_argument("scenario", choices=["healthy", "manual", "http500", "latency", "no-data", "configuration", "hpa", "bluegreen", "load"])
     parser.add_argument("--context", default="kind-argo-canary-local")
     parser.add_argument("--url", default="http://127.0.0.1:18080/")
     parser.add_argument("--host", default="demo-app.local")
@@ -475,7 +559,7 @@ def main():
     lab = Lab(args)
     {"healthy": lab.automatic, "manual": lab.manual, "http500": lambda: lab.failure("http500"),
      "latency": lambda: lab.failure("latency"), "no-data": lab.no_data,
-     "configuration": lab.configuration, "hpa": lab.hpa}[args.scenario]()
+     "configuration": lab.configuration, "hpa": lab.hpa, "bluegreen": lab.bluegreen}[args.scenario]()
 
 
 if __name__ == "__main__":
