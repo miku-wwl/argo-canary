@@ -30,7 +30,9 @@ spec:
       canaryService: {{ $name }}-canary
       maxSurge: 100%
       maxUnavailable: 0
+      {{- if not .Values.canary.dynamicStableScale }}
       scaleDownDelaySeconds: {{ .Values.canary.scaleDownDelaySeconds }}
+      {{- end }}
       abortScaleDownDelaySeconds: 10
       trafficRouting:
         istio:

@@ -333,8 +333,12 @@ class Lab:
         with self.load() as load:
             sha, candidate = self.release("manual", canary__manualApproval=True, canary__dynamicStableScale=True)
             def gate():
-                rollout = self.rollout()["status"]
-                return rollout.get("phase") == "Paused" and any(
+                resource = self.rollout()
+                rollout = resource["status"]
+                index = rollout.get("currentStepIndex", -1)
+                steps = resource["spec"]["strategy"]["canary"]["steps"]
+                indefinite = 0 <= index < len(steps) and steps[index].get("pause") == {}
+                return indefinite and rollout.get("phase") == "Paused" and any(
                     p["reason"] == "CanaryPauseStep" for p in rollout.get("pauseConditions", []))
             self.wait("manual approval gate", gate)
             index = self.rollout()["status"]["currentStepIndex"]
@@ -344,6 +348,7 @@ class Lab:
             self.log("indefinite gate did not auto-advance", observed_seconds=35)
             self.cli("abort")
             self.wait("manual abort restored Stable", lambda: self.weights() == [100, 0])
+            self.wait("manual Abort reconciled", lambda: self.rollout()["status"].get("phase") == "Degraded")
             self.cli("retry")
             self.wait("retry reached manual gate", gate)
             self.cli("promote")
@@ -417,6 +422,7 @@ print(json.dumps(results))
             # step; promote would skip that analysis. Abort + Retry re-evaluates.
             self.cli("abort")
             self.wait("no-data recovery restored Stable", lambda: self.weights() == [100, 0])
+            self.wait("no-data Abort reconciled", lambda: self.rollout()["status"].get("phase") == "Degraded")
             self.cli("retry")
             self.healthy()
             self.log("EXP-05 PASS", traffic=load.summary(), analysis=self.analyses())
@@ -428,6 +434,18 @@ print(json.dumps(results))
         sha, _ = self.release("analysis-values-only", new_revision=False, analysis__p95Milliseconds=450)
         self.sync()
         assert self.rollout()["status"]["currentPodHash"] == original
+        self.revert(sha)
+        sha, _ = self.release("Service port and route ownership", new_revision=False, service__port=8080)
+        self.sync()
+        assert self.rollout()["status"]["currentPodHash"] == original
+        service = self.obj("service", "demo-app-stable")["spec"]
+        assert service["ports"][0]["port"] == 8080
+        assert service["selector"]["rollouts-pod-template-hash"] == original
+        routes = self.obj("virtualservice")["spec"]["http"][0]["route"]
+        assert all(r["destination"]["port"]["number"] == 8080 for r in routes)
+        with self.load() as traffic:
+            time.sleep(5)
+        assert traffic.summary()["http_status"].get(200, 0) >= 100
         self.revert(sha)
         chart = ROOT / "infra/helm/demo-app/Chart.yaml"
         if command("git", "status", "--porcelain", "--", str(chart)):
@@ -500,7 +518,8 @@ print(json.dumps(results))
                 raise
         def gate():
             return phase("Paused") and any(p["reason"] == "BlueGreenPause"
-                for p in rollout()["status"].get("pauseConditions", []))
+                for p in rollout()["status"].get("pauseConditions", [])) and rollout()["status"].get(
+                    "blueGreen", {}).get("prePromotionAnalysisRunStatus", {}).get("status") == "Successful"
         def response_release(host):
             connection = http.client.HTTPConnection("127.0.0.1", 18080, timeout=5)
             try:
@@ -528,8 +547,12 @@ print(json.dumps(results))
                 self.cli("abort", "demo-bg", namespace)
                 self.wait("Blue/Green Abort", lambda: rollout()["status"].get("abort") is True and phase("Degraded"))
                 assert response_release(active_host) == "bg-baseline"
+                previous_analysis = rollout()["status"]["blueGreen"]["prePromotionAnalysisRunStatus"]["name"]
                 self.cli("retry", "demo-bg", namespace)
                 self.wait("Blue/Green Abort cleared", lambda: not rollout()["status"].get("abort", False) and not phase("Degraded"))
+                self.wait("new Blue/Green pre-analysis succeeded", lambda: rollout()["status"].get(
+                    "blueGreen", {}).get("prePromotionAnalysisRunStatus", {}).get("name") != previous_analysis and
+                    rollout()["status"].get("blueGreen", {}).get("prePromotionAnalysisRunStatus", {}).get("status") == "Successful")
                 self.wait("Blue/Green retried gate", gate)
                 self.cli("promote", "demo-bg", namespace)
                 self.wait("Blue/Green promoted", lambda: phase("Healthy"))

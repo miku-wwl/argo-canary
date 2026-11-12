@@ -1,220 +1,102 @@
-# 已验证的 E2E 渐进式交付验证
+# 实验与运维指南
 
-本文记录规范 GitOps 发布路径和一次受控失败金丝雀发布（Canary）的完整运行时验证结果。
-内容来自本地参考环境中实际观测到的证据，不代表生产规模的容量或可用性承诺。
+使用真实 kind、Istio 网关、Prometheus 和 Argo CD。实验会提交并推送 lab values，请在专用分支执行，并先运行 bootstrap.ps1 -DeployApplication -GitOpsRef <该分支>。不要在 production Application 上注入故障。
 
-## 1. 成功的 GitOps 发布
+## 流量和所有权
 
-已验证的发布链路如下：
+请求经过 127.0.0.1:18080，Host 为 demo-app.local。直接转发 Service / Pod 只能诊断，不能证明 Istio 加权路由。
 
-```text
-Git 推送
-  -> GitHub Actions
-  -> 容器镜像仓库
-  -> 自动 GitOps Helm 镜像标签提交
-  -> Argo CD 自动同步
-  -> Argo Rollouts
-  -> Istio 加权流量
-  -> Prometheus 分析
-  -> 自动晋级
-  -> 健康发布
-```
+Rollouts 管理 Stable/Canary Service 的 Pod hash 和 VirtualService 权重。Argo CD 忽略这些字段的差异并使用 ApplyOutOfSyncOnly=true，避免普通应用更新重写路由。Service 和 Rollout 使用 server-side apply，保留其他控制器拥有的选择器 / scale 字段。不要使用会把整个 HTTP 数组从 live 复制回 desired 的 RespectIgnoreDifferences 补丁冻结非权重字段。
 
-### 基线
+Pod 模板不包含 Chart version/appVersion。分析阈值、入口域名不创建新 Pod 修订；digest、应用 release 和故障环境变量会。启用 HPA 时 chart 不声明 replicas；关闭后恢复 Git 副本数。
 
-源代码发布前立即观测到的基线如下：
+## 三态分析
 
-| 项目 | 观测值 |
+ServiceMonitor 把被抓取 Pod 的模板 hash 写成 rollout_hash。AnalysisRun 传入 Latest hash，查询同时限定命名空间及 reporter=destination。Stable 和旧候选的数据不会与新候选混合。
+
+| 指标 | 默认条件 |
 | --- | --- |
-| 源代码提交 | `e0b39a0` (`e0b39a08f7cc5512f33cf6c8ed16df0a790991f9`) |
-| Git 期望镜像 | `minglai/argo-canary-demo-app:v39` |
-| Argo CD 修订版本 | `e0b39a08...` |
-| Rollout 状态 | `Healthy` |
-| 稳定 ReplicaSet | `5697d9fb5f` |
-| 基线 HTTP 响应 | `200` |
+| 最小样本 | 最近 1 分钟 increase 估算候选请求数 ≥ 50 |
+| HTTP 成功率 | 候选非 5xx / 全部候选请求 ≥ 99% |
+| P95 | Istio request duration histogram < 500 ms |
 
-### 源代码发布与 GitHub Actions
+成功率及 P95 查询都用最小样本量过滤。全部为 500 时，成功请求分子显式补零；空数组、NaN、Infinity 和样本不足均不会自动成功或失败。
 
-唯一的应用变更是 [`src/app.py`](../src/app.py) 中已有的响应标记：
+默认每 10 秒测量；连续 2 次成功通过；超过 1 次失败终止；超过 5 次 Inconclusive 结束并暂停；总测量次数 8，另有 provider 错误上限。预热与 30 秒观察先于分析。分析预算有界，结束后的暂停需人工处理。
 
-```text
-Hello Auckland k8s Demo - From version 50
-  ->
-Hello Auckland k8s Demo - From version 51
+更大的样本、窗口和测量次数可降低偶然抖动影响，也会延长检测及故障暴露。直方图 P95 是桶内估算：800 ms 注入可能得到接近 975 ms 的结果，应同时查看客户端延迟。
+
+```powershell
+kubectl --context kind-argo-canary-local -n demo get rollout,analysisrun
+kubectl --context kind-argo-canary-local -n demo get virtualservice demo-app -o yaml
+kubectl --context kind-argo-canary-local -n demo get service demo-app-stable demo-app-canary -o yaml
+kubectl --context kind-argo-canary-local -n demo get endpointslices
 ```
 
-源代码发布提交为 `5e85c74`，已通过 HTTPS 正常推送到 `origin/main`。
-
-实际工作流 [`构建并推送镜像`](../.github/workflows/build.yaml) 执行成功：
-
-| 项目 | 观测值 |
-| --- | --- |
-| 运行编号 | [34732214346](https://github.com/miku-wwl/argo-canary/actions/runs/34732214346) |
-| 结果 | `success` |
-| 用时 | 31 秒 |
-| 镜像 | `docker.io/minglai/argo-canary-demo-app:v40` |
-| 镜像 digest | `sha256:617dd67b69dffb2e828eeaf6ac9576b8e21d6406c53a312a9399a8bb8c20a377` |
-
-该工作流构建并推送了带版本号的镜像和 `latest` 标签，然后更新 GitOps 工作目录。
-自动生成的 GitOps 提交为 `255d918`，将 [`values.yaml`](../infra/helm/demo-app/values.yaml)
-中的镜像标签更新为 `v40`，并将 [`Chart.yaml`](../infra/helm/demo-app/Chart.yaml) 中的
-`appVersion` 更新为 `40.0.0`。
-
-工作流触发路径排除了 `infra/**`。因此，这个仅更新 GitOps 的提交没有再次触发镜像构建工作流。
-
-### Argo CD 自动同步
-
-Argo CD 的 `demo-app` Application 自动获取了该 GitOps 提交，过程中没有执行手动 Helm
-升级，也没有直接修改运行中的 Rollout 镜像：
-
-| 项目 | 观测值 |
-| --- | --- |
-| 之前的修订版本 | `e0b39a08...` |
-| 新的修订版本 | `255d9181833efd2d544bc7bb4c017556e0723395` |
-| 同步方式 | 自动；操作成功 |
-| Application 最终状态 | `Synced / Healthy` |
-
-Application 源路径为 `infra/helm/demo-app`，由
-[`infra/argocd/application.yaml`](../infra/argocd/application.yaml) 定义。
-
-### 运行时 Canary 证据
-
-候选 ReplicaSet 为 `d796b94c5`。运行时观测到的顺序如下：
-
-1. 候选版本 `10%` / 稳定版本 `90%`。
-2. 第一个 AnalysisRun `demo-app-d796b94c5-6-2` 完成，状态为 `Successful`。
-3. 候选版本 `50%` / 稳定版本 `50%`。
-4. 第二个 AnalysisRun `demo-app-d796b94c5-6-5` 完成，状态为 `Successful`。
-5. 两个 AnalysisRun 的成功测量值均为 `[1]`。
-6. 候选版本晋级为 `100%` 稳定流量。
-
-实际流量路径为：
-
-```text
-集群内负载生成器
-  -> Istio ingress 网关
-  -> demo-app VirtualService
-  -> 稳定/Canary Service
-  -> 应用 Pod
-```
-
-负载生成器使用 `demo-app.mario.com` Host 请求头，没有直接调用应用 Pod。
-
-### 成功发布的最终状态
-
-- Rollout：`Healthy`
-- 候选流量：`0%`
-- 稳定流量：`100%`
-- Rollout 镜像：`minglai/argo-canary-demo-app:v40`
-- 运行中 Pod 镜像：`v40`
-- 运行中 Pod 镜像 digest：与上面的 GitHub Actions digest 匹配
-- 经 Istio 的 HTTP 响应：`200`
-- 响应正文：`Hello Auckland k8s Demo - From version 51`
-
-## 2. 受控失败的金丝雀发布
-
-失败测试使用了在仓库之外构建的临时镜像：
-
-```text
-argo-canary-local:broken-20260913-1234
-```
-
-该镜像会在根路径稳定返回 HTTP 500 响应。该镜像没有提交，也没有推送。
-
-观测证据如下：
-
-- 相同的 Istio ingress 路径返回了 7 次 HTTP `500`。
-- AnalysisRun `demo-app-68f6c4c8d9-3-2` 完成，状态为 `Failed`。
-- Prometheus 成功率测量值为 `0.9591` 和 `0.9010`。
-- 配置的阈值为 `0.99`。
-- Rollout 记录为 `Abort = true`、`Phase = Degraded`。
-- 流量恢复为候选 `0%`、稳定 `100%`。
-- 随后通过 ingress 路径发出的请求持续返回 HTTP `200`。
-
-由于基于 Prometheus 的 AnalysisRun 低于配置的成功率阈值，失败候选版本没有继续晋级。
-这次验证证明了该 Rollout 中基于指标的 Analysis 失败、Rollout 中止和稳定流量恢复；
-但不代表系统具备本次观测范围之外的更广泛回滚能力。
-
-随后，环境恢复为健康的候选版本：
-
-- Rollout：`Healthy`
-- `abort` 字段：已清除
-- 候选流量：`0%`
-- 稳定流量：`100%`
-
-测试结束后，临时负载生成器、故障镜像构建上下文和损坏的 Docker 镜像均已移除。
-
-## 3. Prometheus 查询
-
-AnalysisTemplate 使用了下面这条已验证的查询：
+在 Prometheus 中用实际候选 hash 替换占位符：
 
 ```promql
-sum(rate(istio_requests_total{
-  reporter="destination",
-  destination_service=~"demo-app-canary.demo.svc.cluster.local",
-  destination_workload_namespace="demo",
-  response_code!~"5.*"
-}[2m]))
-/
-sum(rate(istio_requests_total{
-  reporter="destination",
-  destination_service=~"demo-app-canary.demo.svc.cluster.local",
-  destination_workload_namespace="demo"
-}[2m]))
+sum(increase(istio_requests_total{
+  reporter="destination", destination_workload_namespace="demo",
+  rollout_hash="<candidate-hash>"
+}[1m]))
+
+histogram_quantile(0.95, sum by(le)(rate(
+  istio_request_duration_milliseconds_bucket{
+    reporter="destination", destination_workload_namespace="demo",
+    rollout_hash="<candidate-hash>"
+  }[1m]
+)))
 ```
 
-健康候选版本返回 `1.0`。损坏候选版本产生了低于 `0.99` 的测量值，导致 AnalysisRun
-失败并使 Rollout 中止。
+## 实验
 
-指标来源是真实的 Istio 指标 `istio_requests_total`，观测到的目标标签为：
+在其他终端保持 Prometheus 的 19090 端口转发，然后运行：
 
-```text
-destination_service=demo-app-canary.demo.svc.cluster.local
-destination_workload_namespace=demo
+```powershell
+$env:PATH = "$PWD\.local\bin;$env:PATH"
+python scripts/lab.py healthy
+python scripts/lab.py manual
+python scripts/lab.py http500
+python scripts/lab.py latency
+python scripts/lab.py no-data
+python scripts/lab.py configuration
+python scripts/lab.py bluegreen
+python scripts/lab.py hpa
 ```
 
-## 4. 证据矩阵
+| 实验 | 验证内容 |
+| --- | --- |
+| EXP-01 | CI 已批准 digest，10%/50% 实测比例、两个分析、端点 / 代理、晋级及旧副本缩容 |
+| EXP-02 | 分析成功后的无限 Pause；观察不自动推进；Abort、Retry、逐级 Promote |
+| EXP-03 | 真实 500、候选成功率失败、Abort、实际入口恢复及 Git revert |
+| EXP-04 | 约 800 ms 延迟且 HTTP 200；只有 P95 失败，恢复及 Stable 配置隔离 |
+| EXP-05 | 无数据预算耗尽为 Inconclusive 并暂停；恢复流量后 Abort + Retry 重新分析 |
+| EXP-06 | EXP-02 的 50% 门禁处，同一应用临时 L4 Service 的新连接 / Keep-Alive 与 Istio L7 单连接对比 |
+| EXP-07 | Abort 后 Synced / Degraded；Git revert 后 Healthy；重建 Stable Pod 检查配置 |
+| EXP-08 | 真实 production Environment 等待、本人审批、candidate artifact、GitOps 提交及部署 digest |
+| EXP-09 | 非 Pod values / Chart 元数据不创建修订，Pod 变化创建修订，所有权和回退 |
+| EXP-10 | 临时 Argo CD Application 使用同一 chart；Active/Preview、预分析、受控晋级、故障 Preview 和恢复 |
+| EXP-11 | 真实 CPU 指标、Rollout scale 扩容，移除 HPA 并恢复 Git 副本数 |
 
-| 能力 | 证据 | 结果 |
-| --- | --- | --- |
-| CI 镜像构建 | GitHub Actions 运行 `34732214346`，Build and Push 步骤成功 | PASS |
-| 镜像仓库推送 | 带版本镜像 `v40` 及其 digest 已推送 | PASS |
-| GitOps 提交 | 自动提交 `255d918` 更新了 Helm 标签和 Chart appVersion | PASS |
-| Argo CD 自动同步 | Application 切换到修订版本 `255d918...`，状态为 `Synced / Healthy` | PASS |
-| 10% 加权 Canary | 运行时观测到 Rollout 状态为 `10 / 90` | PASS |
-| 第一次 Prometheus Analysis | `demo-app-d796b94c5-6-2`，测量值为 `[1]` | PASS |
-| 50% 加权 Canary | 运行时观测到 Rollout 状态为 `50 / 50` | PASS |
-| 第二次 Prometheus Analysis | `demo-app-d796b94c5-6-5`，测量值为 `[1]` | PASS |
-| 自动晋级 | Rollout 到达第 6 步，稳定流量为 100% | PASS |
-| 失败候选检测 | 7 次 HTTP 500，以及测量值 `0.9591`、`0.9010` | PASS |
-| Rollout 中止 | `Abort=true`、`Phase=Degraded`，且 AnalysisRun 失败 | PASS |
-| 稳定流量恢复 | 中止后的状态为候选 `0%`、稳定 `100%`，随后 HTTP 200 | PASS |
-| 最终镜像一致性 | Git、Rollout、Pod 标签均为 `v40`；Pod digest 与 CI digest 匹配 | PASS |
+临时连接测试 Service / 客户端及 Blue/Green 命名空间在结束时删除。脚本只允许 kind-argo-canary-local。部分输出不能当作完整 PASS；失败时先检查 Git 与运行状态，再修复重试。
 
-## 5. 架构边界
+## 恢复
 
-项目的规范发布路径为：
+retry rollout 重试 Abort，不会重做仍暂停的 Inconclusive 分析；此时 Promote 会跳过该分析。要重新评估，先恢复流量，Abort 并等 Degraded / Stable 路由，再 Retry 创建新 AnalysisRun。不要用 promote --full 替代分析。
 
-```text
-Git 推送
-  -> GitHub Actions
-  -> 容器镜像仓库
-  -> GitOps
-  -> Argo CD
-  -> Argo Rollouts
-  -> Istio
-  -> Prometheus
-  -> 晋级或中止
+Abort 不改 Git。错误配置需要：
+
+```powershell
+git revert <只包含错误实验配置的提交>
+git push
+kubectl --context kind-argo-canary-local -n argocd annotate application demo-app argocd.argoproj.io/refresh=hard --overwrite
 ```
 
-本地 `kind` 集群只是本次验证使用的 Kubernetes 参考环境。它是外部提供的基础设施，
-不是应用架构依赖。仓库不会创建、检测或管理 kind 集群，也不编码任何 kind 专属的应用逻辑。
+配置权重与 Envoy 数据面收敛要分别检查。幂等 GET 的连接失败、reset 和 503 使用有限重试；注入的 500 不重试。回退验证覆盖镜像与 Pod 环境变量，不覆盖数据库迁移、外部副作用或共享状态。
 
-已验证的最终环境如下：
+## GitHub 审批
 
-- Kubernetes context：`kind-argo-canary-local`
-- kind 集群：`argo-canary-local`
-- 节点：`Ready`
-- Argo CD：`Synced / Healthy`
-- Argo Rollouts：`Healthy`
-- 应用 HTTP 路径：`200`
+继续使用已有 DOCKERHUB_TOKEN 和 GH_PAT；构建 Job 无 Git 写权限。production Job 获批后才取得原生 token 的 contents:write；GH_PAT 检查 Environment reviewer 规则。仓库 Secret 不能代替 Required reviewers。关闭管理员绕过并限制可部署分支；代理不能代替本人审批。
+
+参考：[Argo 分析](https://argoproj.github.io/argo-rollouts/features/analysis/)、[Istio 指标与单位](https://istio.io/latest/docs/reference/config/metrics/)、[GitHub Environment](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)。
