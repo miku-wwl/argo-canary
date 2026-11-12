@@ -1,7 +1,7 @@
 app:
-  release: healthy-1794464295764
+  release: healthy-1794467872526
   faultMode: healthy
 image:
-  digest: sha256:e5503fabcf4536d9af3a8fa425e43f56484f761b8d988be215301ec0a1429a1c
+  digest: sha256:3151228b5197b2f89c62767b02585bb32177c7c2cfaee262272b351fe5c01ba8
 canary:
   manualApproval: false
