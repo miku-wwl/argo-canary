@@ -40,7 +40,7 @@ jobs:
         run: |
           curl -fsSL https://get.helm.sh/helm-v4.2.2-linux-amd64.tar.gz -o /tmp/helm.tar.gz
           curl -fsSL https://get.helm.sh/helm-v4.2.2-linux-amd64.tar.gz.sha256sum -o /tmp/helm.sha256
-          (cd /tmp && sha256sum -c helm.sha256)
+          (cd /tmp && sed 's/helm-v4.2.2-linux-amd64.tar.gz/helm.tar.gz/' helm.sha256 | sha256sum -c -)
           tar -xzf /tmp/helm.tar.gz -C /tmp
           sudo install /tmp/linux-amd64/helm /usr/local/bin/helm
           curl -fsSL https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz -o /tmp/actionlint.tar.gz

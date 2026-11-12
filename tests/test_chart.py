@@ -1,5 +1,4 @@
 """Regression tests for routing, analysis and Helm revision safety."""
-import copy
 import shutil
 import subprocess
 from pathlib import Path
