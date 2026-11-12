@@ -225,7 +225,9 @@ class Lab:
     def automatic(self):
         self.healthy()
         with self.load() as load:
-            _, candidate = self.release("healthy", canary__manualApproval=False)
+            production = yaml.safe_load((ROOT / "infra/helm/demo-app/values-production.yaml").read_text())
+            _, candidate = self.release("healthy", canary__manualApproval=False,
+                image__digest=production["image"]["digest"])
             buckets = collections.defaultdict(collections.Counter)
             previous_weights, previous_counts = None, load.snapshot()
             checked = False
@@ -280,7 +282,9 @@ class Lab:
                 assert any(m["name"] == "success-rate" and m["phase"] == "Failed" for r in runs for m in r["metrics"])
             else:
                 assert traffic["http_status"].get(500, 0) == 0, traffic
-                assert traffic["latency_ms"][candidate]["median"] >= 780
+                # The injection is approximately 800 ms; allow 10% timing
+                # variance and independently require a failed P95 analysis.
+                assert traffic["latency_ms"][candidate]["median"] >= 720, traffic
                 assert any(m["name"] == "p95-latency" and m["phase"] == "Failed" for r in runs for m in r["metrics"])
                 assert any(m["name"] == "success-rate" and m["phase"] == "Successful" for r in runs for m in r["metrics"])
             # Kubernetes weights are desired routing state. Observe the Envoy
@@ -488,7 +492,12 @@ print(json.dumps(results))
         def rollout():
             return self.obj("rollout", "demo-bg", namespace)
         def phase(expected):
-            return rollout().get("status", {}).get("phase") == expected
+            try:
+                return rollout().get("status", {}).get("phase") == expected
+            except RuntimeError as error:
+                if "NotFound" in str(error):
+                    return False
+                raise
         def gate():
             return phase("Paused") and any(p["reason"] == "BlueGreenPause"
                 for p in rollout()["status"].get("pauseConditions", []))
@@ -517,9 +526,10 @@ print(json.dumps(results))
                 runs = json.loads(self.k("-n", namespace, "get", "analysisruns", "-o", "json"))["items"]
                 assert any(r.get("status", {}).get("phase") == "Successful" for r in runs)
                 self.cli("abort", "demo-bg", namespace)
-                self.wait("Blue/Green Abort", lambda: rollout()["status"].get("abort") is True)
+                self.wait("Blue/Green Abort", lambda: rollout()["status"].get("abort") is True and phase("Degraded"))
                 assert response_release(active_host) == "bg-baseline"
                 self.cli("retry", "demo-bg", namespace)
+                self.wait("Blue/Green Abort cleared", lambda: not rollout()["status"].get("abort", False) and not phase("Degraded"))
                 self.wait("Blue/Green retried gate", gate)
                 self.cli("promote", "demo-bg", namespace)
                 self.wait("Blue/Green promoted", lambda: phase("Healthy"))
